@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Knit · UI Harness</title>
+<link rel="stylesheet" href="../dist/styles/app.css">
+</head>
+<body>
+<div id="app"></div>
+
+<!--
+  离线 UI 夹具：不启动 Nim 宿主，用假 bridge 喂固定数据。
+  支持 hash：
+    ""         → Log 默认页
+    #changes   → Changes 视图
+    #merge     → 三栏合并弹窗（含可编辑 Result）
+    #branches  → 分支管理弹窗
+-->
+<script>
+const now = Date.now();
+const hour = 3600_000;
+const day = 24 * hour;
+
+const repos = [
+  ['knit','main','TS',5,2,0,1,2],
+  ['nimi','main','Nim',3,1,0,0,0],
+  ['mygo-work','main','Go',2,0,1,0,0],
+  ['nsh-native','main','Rust',0,0,0,0,0],
+  ['nsgo','dev','Go',7,3,2,0,0],
+  ['pi','main','TS',1,0,0,0,0],
+  ['aglet','main','TS',0,0,0,0,0],
+  ['magpie','main','Go',3,1,0,0,0],
+  ['tau','main','Rust',0,0,0,0,0],
+  ['waku','main','TS',4,0,0,0,0],
+  ['picx','master','TS',0,0,2,0,0],
+  ['envman','main','Rust',2,0,0,0,0],
+  ['cloudagent-py','main','Py',9,0,0,0,0],
+  ['fluent_reading','main','TS',0,0,0,0,0],
+  ['mygo-music','main','Go',6,4,0,0,0],
+  ['notes','main','md',4,0,0,0,0],
+].map((r, i) => ({
+  id: 'r' + i, name: r[0], path: '/Users/zhimoe/code/' + r[0], branch: r[1],
+  detached: false, head: (0x9f3c1a2 + i).toString(16), ahead: r[4], behind: r[5],
+  lang: r[2], lastCommitAt: now - (i + 1) * 37 * 60_000,
+  dirty: { staged: r[3], unstaged: r[7] || 0, untracked: i === 0 ? 1 : 0, conflicted: r[6] ? 1 : 0 },
+}));
+
+const HASHES = ['9f3c1a2','7d21ab0','3c8e714','b41d90f','e0772c5','1fa83b6','88ac3d1',
+                '5b2c9e0','c93f107','2d70b4e','a1c85f3'];
+const DAG = [[1],[2],[3,5],[4],[6],[6],[7],[8],[9],[10],[]];
+const AUTH = ['zhimoe','bob','lee','zhimoe','zhimoe','bob','zhimoe','lee','zhimoe','bob','zhimoe'];
+const SUBJ = [
+  'git: 仓库扫描改为并行分片 + 增量索引',
+  'diff: 折叠未变区块时保留 3 行上下文',
+  "Merge branch 'feat/worktree'",
+  'worktree: 按 hand 命名，状态写入 .git/knit/hand.json',
+  'ipc: 大 diff 落临时文件，前端分块 fetch',
+  'log: 分支图 lane 着色与 refs chip',
+  'chore: 升级 libgit2 到 1.9 并补齐对拍测试',
+  'fix: commit 草稿按仓库隔离',
+  'agent: 提交信息生成走 --mode=commit',
+  'docs: 多仓库看板交互说明',
+  'init: exe 骨架 1.2 MB',
+];
+const commits = HASHES.map((short, i) => ({
+  hash: short.padEnd(40, '0'),
+  shortHash: short,
+  parents: DAG[i].map((k) => HASHES[k].padEnd(40, '0')),
+  author: { name: AUTH[i], email: AUTH[i] + '@example.com' },
+  committedAt: now - (i + 1) * 2 * hour,
+  subject: SUBJ[i],
+  body: i === 0 ? '把顺序 walk 改成 8 路并行分片 + dirMtimes 增量索引，30 个仓库 status P95 压到 84.5ms。' : '',
+  refs: i === 0 ? ['HEAD -> main', 'origin/main'] : i === 2 ? ['feat/worktree'] : i === 6 ? ['tag: v0.1.3'] : [],
+}));
+
+const commitFiles = [
+  { path: 'src/core/scan.ts', status: 'M', group: 'commit', additions: 12, deletions: 4 },
+  { path: 'src/core/index.nim', status: 'M', group: 'commit', additions: 3, deletions: 1 },
+  { path: 'web/src/views/diff.ts', status: 'M', group: 'commit', additions: 8, deletions: 2 },
+];
+
+const changes = [
+  { path: 'src/core/scan.ts', status: 'M', group: 'staged', additions: 12, deletions: 4 },
+  { path: 'web/src/views/diff.ts', status: 'M', group: 'staged', additions: 8, deletions: 2 },
+  { path: 'src/core/index.nim', status: 'M', group: 'unstaged', additions: 3, deletions: 1 },
+  { path: 'src/config.ts', status: 'M', group: 'unstaged', additions: 6, deletions: 6 },
+  { path: 'src/core/merge.ts', status: 'U', group: 'unstaged', additions: 3, deletions: 3, conflict: true },
+  { path: 'docs/windows.md', status: 'A', group: 'unstaged', additions: 30, deletions: 0, untracked: true },
+];
+
+const refs = [
+  { name: 'main', type: 'head', target: HASHES[0].padEnd(40, '0') },
+  { name: 'feat/worktree', type: 'branch', target: HASHES[2].padEnd(40, '0') },
+  { name: 'fix/discard-untracked', type: 'branch', target: HASHES[4].padEnd(40, '0') },
+  { name: 'origin/main', type: 'remote', target: HASHES[0].padEnd(40, '0') },
+  { name: 'origin/feat/worktree', type: 'remote', target: HASHES[2].padEnd(40, '0') },
+  { name: 'v0.1.3', type: 'tag', target: HASHES[6].padEnd(40, '0') },
+];
+
+const row = (t, l, r, text, hl) => ({ t, ...(l ? { oldNo: l } : {}), ...(r ? { newNo: r } : {}), text, ...(hl ? { hl } : {}) });
+const diffScan = {
+  path: 'src/core/scan.ts', status: 'M', binary: false, size: 3312, additions: 12, deletions: 4,
+  hunks: [
+    { header: '@@ -38,9 +38,11 @@ export async function scanTree', oldStart: 38, oldLines: 9, newStart: 38, newLines: 11, rows: [
+      row('ctx', 38, 38, 'export async function scanTree(root: string) {'),
+      row('ctx', 39, 39, '  const started = performance.now()'),
+      row('del', 40, 0, '  const repos = await walk(root)', [[17, 5]]),
+      row('add', 0, 40, '  const shards = await Promise.all(', [[18, 10]]),
+      row('add', 0, 41, '    split(root, 8).map((dir) => walk(dir)),'),
+      row('add', 0, 42, '  )'),
+      row('ctx', 41, 43, '  const found = shards.flat().filter(isRepo)'),
+      row('ctx', 42, 44, '  const elapsed = performance.now() - started'),
+      row('ctx', 43, 45, '  const sorted = found.sort(byPath)'),
+    ] },
+    { header: '@@ -62,7 +64,9 @@ export async function scanTree', oldStart: 62, oldLines: 7, newStart: 64, newLines: 9, rows: [
+      row('ctx', 62, 64, '  return {'),
+      row('ctx', 63, 65, '    repos: found,'),
+      row('del', 64, 0, '    ms: performance.now() - started', [[8, 21]]),
+      row('add', 0, 66, '    ms: Math.round(performance.now() - started),', [[9, 10]]),
+      row('add', 0, 67, '    shards: shards.length,'),
+      row('ctx', 65, 68, '  }'),
+      row('ctx', 66, 69, '}'),
+    ] },
+  ],
+};
+const diffIndex = {
+  path: 'src/core/index.nim', status: 'M', binary: false, size: 2100, additions: 3, deletions: 1,
+  hunks: [{ header: '@@ -118,7 +118,9 @@ proc statusAll*', oldStart: 118, oldLines: 7, newStart: 118, newLines: 9, rows: [
+    row('ctx', 118, 118, 'proc statusAll*(repos: seq[string]): seq[RepoState] ='),
+    row('del', 119, 0, '  for r in repos:'),
+    row('del', 120, 0, '    result.add readStatus(r)'),
+    row('add', 0, 119, '  parallel(repos, 8):', [[2, 8]]),
+    row('add', 0, 120, '    repo: result.add readStatus(repo)'),
+    row('ctx', 121, 121, ''),
+  ] }],
+};
+const diffs = { 'src/core/scan.ts': diffScan, 'src/core/index.nim': diffIndex };
+
+const mergeState = {
+  path: 'src/core/merge.ts',
+  ours: "export const config = {\n  retries: 3,\n  timeout: 15_000,\n  branch: 'main',\n}\n",
+  theirs: "export const config = {\n  retries: 5,\n  timeout: 30_000,\n  branch: 'feat/worktree',\n}\n",
+  base: "export const config = {\n  retries: 2,\n  timeout: 15_000,\n  branch: 'main',\n}\n",
+  lines: [
+    'export const config = {',
+    '<<<<<<< HEAD',
+    '  retries: 3,',
+    '||||||| base',
+    '  retries: 2,',
+    '=======',
+    '  retries: 5,',
+    '>>>>>>> feat/worktree',
+    '  timeout: 15_000,',
+    "  branch: 'main',",
+    '}',
+  ],
+  blocks: [],
+  binary: false,
+};
+
+const consoleEntries = [
+  ['git status --porcelain=v2 -z', 18], ['git log -n 200 --format=…', 41],
+  ['git for-each-ref --format=…', 6], ['git diff --no-color -U3 -- src/core/scan.ts', 33],
+  ['git fetch --all --prune', 185], ['git revwalk (libgit2, in-process)', 2],
+].map(([cmd, ms]) => ({ cmd, ms, ok: true }));
+
+const shelfItems = [
+  { id: 'stash@{0}', kind: 'stash', name: 'hotfix 临时改动', subtitle: 'stash · stash@{0}', path: '', epochMs: now - 3 * day },
+  { id: '1700.patch', kind: 'patch', name: '1700.patch', subtitle: '3 个文件 · 11-26 12:20', path: '/tmp/1700.patch', epochMs: now - 40 * 60_000 },
+];
+
+const agentConfig = {
+  defaultAgent: 'pi', concurrency: 2,
+  agents: [{ id: 'pi', label: 'Pi', command: 'pi' }, { id: 'codex', label: 'Codex', command: 'codex' }],
+  skills: [
+    { id: 'understanding-anything', label: '读代码', path: '~/skills/understanding-anything/SKILL.md' },
+    { id: 'commit-msg', label: '提交信息', path: '~/skills/commit-msg/SKILL.md' },
+    { id: 'repo-map', label: '仓库地图', path: '~/skills/repo-map/SKILL.md' },
+    { id: 'changelog', label: '变更日志', path: '~/skills/changelog/SKILL.md' },
+  ],
+  configPath: '~/.config/knit/agents.json',
+  modes: { read: ['understanding-anything'], commit: ['commit-msg'], review: ['understanding-anything', 'repo-map'] },
+};
+
+const env = (data) => ({ ok: true, data });
+const parseArg = (raw) => {
+  try {
+    const v = JSON.parse(raw);
+    if (Array.isArray(v)) return typeof v[0] === 'string' ? JSON.parse(v[0]) : (v[0] ?? {});
+    return v ?? {};
+  } catch { return {}; }
+};
+const emit = (name, payload) => {
+  if (window.knitEvent) window.knitEvent(name, JSON.stringify(payload));
+};
+
+window.nimi = {
+  async call(method, arg) {
+    if (method === 'Shell.version') return 'knit 0.1.0 (harness)';
+    if (method === 'Shell.getState') {
+      return JSON.stringify({
+        root: '/Users/zhimoe/code', scanDepth: 4,
+        excludeGlobs: ['node_modules', 'target', '.venv', 'vendor'],
+        excludeRepos: [], selectedRepoId: 'r0', diffMode: 'split',
+        editor: { command: '', args: [] }, terminal: { shell: '', args: [] },
+        protectedBranches: ['main', 'master'], confirmDangerous: true,
+      });
+    }
+    if (method === 'Shell.ready') return null;
+    if (method === 'Shell.setSelected') return JSON.stringify({ ok: true });
+    if (method === 'Shell.setRoot') return JSON.stringify({ ok: true, root: parseArg(arg).root || '/Users/zhimoe/code' });
+    if (method === 'Shell.setExclusions') return JSON.stringify({ ok: true });
+    if (method === 'Shell.pickRoot' || method === 'Shell.pickPatch') return '';
+    if (method === 'Shell.openFile' || method === 'Shell.jsError') return { ok: true };
+    if (method === 'Agent.config') return env(agentConfig);
+    if (method === 'Repo.cached') return env(repos);
+    if (method === 'Repo.scan') return env({ repos, scanned: 16, skipped: 2, ms: 4 });
+    if (method === 'Repo.status') return env({ repos, ms: 84 });
+    if (method === 'Repo.changes') return env({ files: changes, ms: 5 });
+    if (method === 'Repo.reset') return env({ ok: true });
+    if (method === 'Log.list') return env({ commits, hasMore: false, nextCursor: '', ms: 12 });
+    if (method === 'Log.files') return env(commitFiles);
+    if (method === 'Log.refs') return env({ refs });
+    if (method === 'Diff.commit' || method === 'Diff.workdir') {
+      const a = parseArg(arg);
+      const diff = diffs[a.file] || diffScan;
+      return env({ diff: { ...diff, path: a.file || diff.path } });
+    }
+    if (method === 'Diff.chunk') return env({ index: 0, count: 1, chunk: '{}' });
+    if (method === 'Stage.hunk' || method === 'Stage.files' || method === 'Stage.discard') return env({ ok: true });
+    if (method === 'Commit.create') return env({ hash: HASHES[0].padEnd(40, '0') });
+    if (method === 'Commit.cherryPick' || method === 'Commit.revert' || method === 'Commit.pushForce') return env({ ok: true });
+    if (method === 'Commit.patch') return env({ ok: true, file: '/tmp/0001.patch' });
+    if (method === 'Merge.state') return env(mergeState);
+    if (method === 'Merge.resolve') return env({ ok: true });
+    if (method === 'Branch.fetch' || method === 'Branch.checkout' || method === 'Branch.create' || method === 'Branch.delete' || method === 'Branch.mergeAbort') {
+      return env({ ok: true });
+    }
+    if (method === 'Branch.pull' || method === 'Branch.merge') return env({ ok: true, conflict: false, conflicts: [], output: 'Already up to date.' });
+    if (method === 'Rebase.state') return env({ inProgress: false, headName: '', msgNum: 0, end: 0, onto: '', conflicts: [] });
+    if (method === 'Rebase.plan') return env({ onto: HASHES[3].padEnd(40, '0'), commits: commits.slice(0, 3).map((c) => ({ hash: c.hash, shortHash: c.shortHash, subject: c.subject, author: c.author.name, action: 'pick' })) });
+    if (method === 'Rebase.start' || method === 'Rebase.action') return env({ ok: true, conflict: false, state: { inProgress: false, headName: '', msgNum: 0, end: 0, onto: '', conflicts: [] } });
+    if (method === 'Blame.file') return env({ lines: [{ line: 1, hash: HASHES[0].padEnd(40, '0'), shortHash: HASHES[0], author: 'zhimoe', time: now - hour, summary: SUBJ[0], text: 'export async function scanTree(root: string) {' }], minLine: 1, nextLine: 2, hasMore: false, ms: 3 });
+    if (method === 'Worktree.list') return env({ worktrees: [{ path: '/Users/zhimoe/code/knit', branch: 'main', head: HASHES[0], handId: null, locked: false, isMain: true }] });
+    if (method === 'Worktree.add') return env({ ok: true, path: '/Users/zhimoe/code/.knit/hands/h1', branch: 'hand/test', handId: 'h1' });
+    if (method === 'Worktree.remove' || method === 'Worktree.prune') return env({ ok: true });
+    if (method === 'Shelf.list') return env(shelfItems);
+    if (method === 'Shelf.stat') return env({ text: ' src/config.ts | 4 +-\n 1 file changed, 2 insertions(+), 2 deletions(-)\n' });
+    if (method === 'Shelf.save') return env({ ok: true, file: '/tmp/1700.patch' });
+    if (method === 'Shelf.import') return env({ file: '/tmp/imported.patch' });
+    if (method === 'Shelf.apply' || method === 'Shelf.drop') return env({ ok: true });
+    if (method === 'Git.console') return env({ commands: consoleEntries });
+    if (method === 'External.openTemp') return env({ path: '/tmp/scan.ts' });
+    if (method === 'Agent.start') {
+      const a = parseArg(arg);
+      setTimeout(() => {
+        emit('agent:started', { sessionId: a.sessionId, agent: a.agent || 'pi', dir: '/tmp', command: 'pi', args: [] });
+        emit('agent:output', { sessionId: a.sessionId, chunk: '✓ 已分析当前提交与调用链\n', stream: 'out' });
+        setTimeout(() => emit('agent:exit', { sessionId: a.sessionId, code: 0, output: 'feat(gitops): 补齐分支管理与可编辑合并结果', mode: a.mode }), 120);
+      }, 30);
+      return env({ sessionId: a.sessionId, code: 0 });
+    }
+    if (method === 'Agent.write' || method === 'Agent.stop' || method === 'Agent.restore') return env({ ok: true });
+    throw new Error('harness: 未实现的调用 ' + method);
+  },
+  on() {},
+};
+</script>
+<script defer src="../dist/main.js"></script>
+</body>
+</html>
