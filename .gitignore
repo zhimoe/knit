@@ -1,0 +1,27 @@
+# build output
+/dist/
+web/dist/
+web/node_modules/
+shots/
+nimcache/
+
+# binaries & debug symbols
+/knit
+src/main
+scripts/bench_libgit2
+tests/test_all
+tests/test_write
+tests/test_diff
+tests/test_gitlib
+tests/test_ipc
+tests/test_merge
+tests/test_rebase
+*.exe
+!scripts/*.exe
+*.pdb
+
+# editors / os
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

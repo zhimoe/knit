@@ -1,0 +1,10 @@
+{
+  "name": "knit",
+  "slug": "knit",
+  "identifier": "com.zhimoe.knit",
+  "version": "0.1.0",
+  "main": "src/main.nim",
+  "out": "dist",
+  "resources": ["web/dist"],
+  "icon": "resources/icon.png"
+}
