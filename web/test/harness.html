@@ -212,6 +212,7 @@ window.nimi = {
     if (method === 'Shell.setExclusions') return JSON.stringify({ ok: true });
     if (method === 'Shell.pickRoot' || method === 'Shell.pickPatch') return '';
     if (method === 'Shell.openFile' || method === 'Shell.jsError') return { ok: true };
+    if (method === 'Shell.pollEvents') return '[]';
     if (method === 'Agent.config') return env(agentConfig);
     if (method === 'Repo.cached') return env(repos);
     if (method === 'Repo.scan') return env({ repos, scanned: 16, skipped: 2, ms: 4 });

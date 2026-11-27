@@ -38,11 +38,45 @@ const
                                  ## useful to the UI and would blow the IPC cap.
   ConsoleLimit = 500
 
+type
+  SharedConsoleEntry = object
+    cmdPtr: ptr UncheckedArray[char]
+    cmdLen: int
+    ms: int64
+    ok: bool
+    detailPtr: ptr UncheckedArray[char]
+    detailLen: int
+
 var
   consoleLock: Lock
-  consoleRing: seq[ConsoleEntry]
+  consoleRing: array[ConsoleLimit, SharedConsoleEntry]
+  consoleHead = 0
+  consoleCount = 0
 
 initLock(consoleLock)
+
+proc freeSharedConsole(e: var SharedConsoleEntry) =
+  if e.cmdPtr != nil:
+    deallocShared(e.cmdPtr)
+    e.cmdPtr = nil
+  e.cmdLen = 0
+  if e.detailPtr != nil:
+    deallocShared(e.detailPtr)
+    e.detailPtr = nil
+  e.detailLen = 0
+
+proc allocSharedStr(s: string): (ptr UncheckedArray[char], int) =
+  if s.len == 0:
+    return (nil, 0)
+  let buf = cast[ptr UncheckedArray[char]](allocShared(s.len))
+  copyMem(buf, unsafeAddr s[0], s.len)
+  (buf, s.len)
+
+proc readSharedStr(p: ptr UncheckedArray[char], n: int): string =
+  if p == nil or n <= 0:
+    return ""
+  result = newString(n)
+  copyMem(addr result[0], p, n)
 
 # --- process plumbing ------------------------------------------------------
 
@@ -116,23 +150,41 @@ proc recordCommand(args: openArray[string], ms: int64, ok: bool,
   var shortDetail = detail.strip()
   if shortDetail.len > 500:
     shortDetail = shortDetail[0 ..< 500]
+  let (cp, cl) = allocSharedStr(display)
+  let (dp, dl) = allocSharedStr(shortDetail)
   acquire(consoleLock)
-  consoleRing.add ConsoleEntry(cmd: display, ms: ms, ok: ok,
-                               detail: shortDetail)
-  if consoleRing.len > ConsoleLimit:
-    consoleRing = consoleRing[^ConsoleLimit .. ^1]
+  if consoleCount == ConsoleLimit:
+    freeSharedConsole(consoleRing[consoleHead])
+    consoleHead = (consoleHead + 1) mod ConsoleLimit
+    dec consoleCount
+  let idx = (consoleHead + consoleCount) mod ConsoleLimit
+  consoleRing[idx] = SharedConsoleEntry(
+    cmdPtr: cp, cmdLen: cl, ms: ms, ok: ok, detailPtr: dp, detailLen: dl)
+  inc consoleCount
   release(consoleLock)
   emitEvent("git:command", %*{"cmd": display, "ms": ms, "ok": ok,
                                "detail": shortDetail})
 
 proc consoleEntries*(): seq[ConsoleEntry] =
   acquire(consoleLock)
-  result = consoleRing
+  result = newSeqOfCap[ConsoleEntry](consoleCount)
+  for i in 0 ..< consoleCount:
+    let idx = (consoleHead + i) mod ConsoleLimit
+    let e = consoleRing[idx]
+    result.add ConsoleEntry(
+      cmd: readSharedStr(e.cmdPtr, e.cmdLen),
+      ms: e.ms,
+      ok: e.ok,
+      detail: readSharedStr(e.detailPtr, e.detailLen))
   release(consoleLock)
 
 proc clearConsole*() =
   acquire(consoleLock)
-  consoleRing.setLen(0)
+  for i in 0 ..< consoleCount:
+    let idx = (consoleHead + i) mod ConsoleLimit
+    freeSharedConsole(consoleRing[idx])
+  consoleHead = 0
+  consoleCount = 0
   release(consoleLock)
 
 type

@@ -8,10 +8,63 @@
 ## explicitly `bindBackgroundService` run on the UI thread and must stay short.
 
 import std/[json, os, osproc, strutils, times]
+when defined(windows):
+  import std/widestrs
 
 import nimi
 
 import ./knit/[agent, events, logger, services, store, types]
+
+when defined(windows):
+  proc winMessageBoxW(hwnd: pointer, text, caption: WideCString, flags: uint32): int32
+    {.stdcall, dynlib: "user32.dll", importc: "MessageBoxW".}
+
+proc safeEcho(msg: string) =
+  when defined(windows) and defined(guiapp):
+    if getEnv("KNIT_DEV") != "1":
+      return
+  try:
+    stdout.writeLine(msg)
+    stdout.flushFile()
+  except CatchableError:
+    discard
+
+proc writeCrashLog(stage, detail: string): string =
+  let stamp = now().utc.format("yyyy-MM-dd'T'HH:mm:ss'Z'")
+  let body = stamp & " [FATAL] " & stage & "\n" & detail & "\n\n"
+  let candidates = [
+    (try: ensureDataDir() / "crash.log" except CatchableError: ""),
+    getAppDir() / "knit-crash.log",
+    getTempDir() / "knit-crash.log",
+  ]
+  for path in candidates:
+    if path.len == 0:
+      continue
+    try:
+      createDir(path.parentDir)
+      let f = open(path, fmAppend)
+      try:
+        f.write(body)
+      finally:
+        f.close()
+      return path
+    except CatchableError:
+      discard
+  ""
+
+proc showFatalError(stage, detail: string) =
+  let logFile = writeCrashLog(stage, detail)
+  try:
+    logError("fatal", stage & ": " & detail)
+  except CatchableError:
+    discard
+  safeEcho("knit FATAL [" & stage & "]: " & detail)
+  when defined(windows):
+    if not quitWhenReady and getEnv("CI") != "true":
+      let text = "Knit 启动或运行异常（" & stage & "）：\n\n" & detail &
+                 (if logFile.len > 0: "\n\n日志已写入：\n" & logFile else: "")
+      discard winMessageBoxW(nil, newWideCString(text),
+                             newWideCString("Knit 启动失败"), 0x00000010'u32)
 
 type
   Shell = ref object
@@ -30,12 +83,23 @@ proc version(self: Shell): string =
 
 proc ready(self: Shell, repos: int, ms: int) =
   ## Called by the page once the sidebar has painted (docs/07 M0 0.1).
-  echo "knit: first paint repos=", repos, " ms=", ms
+  safeEcho("knit: first paint repos=" & $repos & " ms=" & $ms)
   logInfo("app", "first paint repos=" & $repos & " ms=" & $ms)
   pageReady = true
+  let smokeOut = getEnv("KNIT_SMOKE_OUT")
+  if smokeOut.len > 0:
+    try:
+      writeFile(smokeOut, "first_paint repos=" & $repos & " ms=" & $ms & "\n")
+    except CatchableError:
+      discard
   if quitWhenReady:
     discard agent.stopAll()
     discard postMain(proc() = app.quit())
+
+proc pollEvents(self: Shell): string =
+  ## UI thread: drain worker-thread events (git:command, agent:*) safely without
+  ## sharing GC memory across threads under `--mm:refc`.
+  drainEventsJson()
 
 proc getState(self: Shell): string =
   let settings = loadSettings()
@@ -68,10 +132,10 @@ proc restartWatch(root: string) =
         if ignored in p:
           return
       emitEvent("repo:changed", %*{"path": p}))
-    echo "knit: watching root#", repoId(root)
+    safeEcho("knit: watching root#" & repoId(root))
     logInfo("watch", "watching root#" & repoId(root))
   except CatchableError as e:
-    echo "knit: watch 启动失败：", e.msg
+    safeEcho("knit: watch 启动失败：" & e.msg)
     logWarn("watch", "watch failed: " & e.msg, [root])
 
 proc setRoot(self: Shell, path: string): string =
@@ -155,7 +219,7 @@ proc openPath(path: string, line: int) =
     editorProcs.add startProcess(fallbackCmd, args = fallbackArgs,
                                  options = {poUsePath})
   except OSError as e:
-    echo "knit: 打开编辑器失败：", e.msg
+    safeEcho("knit: 打开编辑器失败：" & e.msg)
 
 proc reapEditors() =
   var alive: seq[Process]
@@ -175,7 +239,7 @@ proc jsError(self: Shell, message: string): string =
   if message.len > 0:
     logError("web", message)
     if getEnv("KNIT_DEV") == "1":
-      echo "knit: js error: ", redact(message, [loadSettings().root])
+      safeEcho("knit: js error: " & redact(message, [loadSettings().root]))
   result = $ %*{"ok": true}
 
 proc openFile(self: Shell, path: string, line: int): string =
@@ -205,8 +269,8 @@ proc ensureWebView2Loader() =
     if not fileExists(dst):
       try:
         writeFile(dst, EmbeddedWebView2Loader)
-      except CatchableError:
-        discard
+      except CatchableError as e:
+        logWarn("boot", "cannot extract WebView2Loader.dll: " & e.msg)
 
 proc ensureEmbeddedWebRoot(): string =
   when defined(knitEmbedWeb):
@@ -250,14 +314,14 @@ proc frontendRoot(): string =
       else:
         result = getCurrentDir() / "web" / "dist"
   if not fileExists(result / "index.html"):
-    echo "knit: 找不到前端产物：", result, "（先 cd web && bun run build）"
+    safeEcho("knit: 找不到前端产物：" & result & "（先 cd web && bun run build）")
   else:
-    echo "knit: web root = ", result
+    safeEcho("knit: web root = " & result)
 
 proc devReload() =
   let root = frontendRoot()
   if not dirExists(root):
-    echo "knit: 没有 web/dist，先 cd web && bun run build"
+    safeEcho("knit: 没有 web/dist，先 cd web && bun run build")
     return
   discard watch(root, proc(e: FileEvent) =
     let now = epochTime()
@@ -268,59 +332,78 @@ proc devReload() =
       window.eval("location.reload()"))
 
 when isMainModule:
-  for arg in commandLineParams():
-    if arg == "--smoke":
-      quitWhenReady = true
+  try:
+    for arg in commandLineParams():
+      if arg == "--smoke":
+        quitWhenReady = true
 
-  registerKnitServices()
-  let shell = Shell()
-  bindService(shell, version, ready, getState, setRoot, setSelected,
-              setExclusions, pickRoot, openFile, pickPatch, jsError)
-  discard agent.ensureDefaultConfig()
+    logInfo("boot", "starting knit 0.1.0")
+    registerKnitServices()
+    let shell = Shell()
+    bindService(shell, version, ready, pollEvents, getState, setRoot, setSelected,
+                setExclusions, pickRoot, openFile, pickPatch, jsError)
+    try:
+      discard agent.ensureDefaultConfig()
+    except CatchableError as e:
+      logWarn("boot", "ensureDefaultConfig failed: " & e.msg)
 
-  # Page events are plain evals; nimi has no streaming channel yet.
-  setEventSink(proc(name, payload: string) {.closure, gcsafe.} =
-    {.cast(gcsafe).}:
-      if window != nil and pageReady:
-        let js = "window.knitEvent(" & $(%name) & "," & $(%payload) & ")"
-        window.eval(js))
+    # Direct eval is only called on the main thread (see events.nim).
+    setEventSink(proc(name, payload: string) {.closure, gcsafe.} =
+      {.cast(gcsafe).}:
+        if window != nil and pageReady:
+          let js = "window.knitEvent(" & $(%name) & "," & $(%payload) & ")"
+          window.eval(js))
 
-  app.name = "knit"
-  app.version = "0.1.0"
+    app.name = "knit"
+    app.version = "0.1.0"
 
-  app.whenReady(proc() =
-    # WebView2's default user-data folder can live next to the exe (Program
-    # Files is read-only). Pin it under knit's data dir so localStorage drafts
-    # survive upgrades (docs/06 §6). nimi doesn't expose this option yet, but
-    # WebView2 honours the environment variable for unpackaged apps.
-    when defined(windows):
-      ensureWebView2Loader()
-      let webviewDir = ensureDataDir() / "webview"
-      createDir(webviewDir)
-      putEnv("WEBVIEW2_USER_DATA_FOLDER", webviewDir)
-    let state = loadUiState()
-    let settings = loadSettings()
-    window = newWindow(WindowOptions(
-      title: "knit",
-      width: state.windowWidth,
-      height: state.windowHeight,
-      url: "nimi://app/index.html",
-      files: newFileServer(frontendRoot(), "nimi")))
-    window.onClose(proc(e: var CloseEvent) =
-      pageReady = false
-      discard agent.stopAll()
-      if window != nil:
-        let size = window.getSize()
-        if size.width > 0 and size.height > 0:
-          saveUiState(UiState(windowWidth: size.width,
-                              windowHeight: size.height,
-                              drawerHeight: state.drawerHeight))
-      if repoWatcher != nil:
-        close(repoWatcher)
-        repoWatcher = nil
-    )
-    restartWatch(settings.root)
-    if getEnv("KNIT_DEV") == "1":
-      devReload())
+    app.whenReady(proc() =
+      try:
+        when defined(windows):
+          ensureWebView2Loader()
+          let webviewDir = ensureDataDir() / "webview"
+          createDir(webviewDir)
+          putEnv("WEBVIEW2_USER_DATA_FOLDER", webviewDir)
+        let state = loadUiState()
+        let settings = loadSettings()
+        let webRoot = frontendRoot()
+        logInfo("boot", "creating window")
+        window = newWindow(WindowOptions(
+          title: "knit",
+          width: state.windowWidth,
+          height: state.windowHeight,
+          url: "nimi://app/index.html",
+          files: newFileServer(webRoot, "nimi")))
+        window.onClose(proc(e: var CloseEvent) =
+          pageReady = false
+          discard agent.stopAll()
+          if window != nil:
+            let size = window.getSize()
+            if size.width > 0 and size.height > 0:
+              try:
+                saveUiState(UiState(windowWidth: size.width,
+                                    windowHeight: size.height,
+                                    drawerHeight: state.drawerHeight))
+              except CatchableError:
+                discard
+          if repoWatcher != nil:
+            close(repoWatcher)
+            repoWatcher = nil
+        )
+        restartWatch(settings.root)
+        if getEnv("KNIT_DEV") == "1":
+          devReload()
+      except CatchableError as e:
+        showFatalError("whenReady", $e.name & ": " & e.msg & "\n" & e.getStackTrace())
+        app.quit()
+      except Defect as e:
+        showFatalError("whenReady(defect)", $e.name & ": " & e.msg & "\n" & e.getStackTrace())
+        app.quit())
 
-  app.run()
+    app.run()
+  except CatchableError as e:
+    showFatalError("main", $e.name & ": " & e.msg & "\n" & e.getStackTrace())
+    quit(1)
+  except Defect as e:
+    showFatalError("main(defect)", $e.name & ": " & e.msg & "\n" & e.getStackTrace())
+    quit(1)

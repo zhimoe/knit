@@ -3,7 +3,7 @@
 ## Every write goes through a temp file + rename so a kill during save cannot
 ## truncate the user's config.
 
-import std/[json, locks, os, tables, times]
+import std/[json, locks, monotimes, os, tables, times]
 
 import ./types
 
@@ -40,13 +40,25 @@ type
 
 const DefaultGlobs = @["node_modules", "target", ".venv", "vendor", "dist", "build"]
 
+proc canWriteDir(dir: string): bool =
+  try:
+    createDir(dir)
+    let probe = dir / ".knit-write-test"
+    writeFile(probe, "1")
+    removeFile(probe)
+    true
+  except CatchableError:
+    false
+
 proc dataDir*(): string =
   let override = getEnv("KNIT_DATA_DIR")
   if override.len > 0:
     return override            # tests / explicit override
   let appDir = getAppDir()
   if fileExists(appDir / "knit.portable") or dirExists(appDir / "data"):
-    return appDir / "data"     # portable mode: keep all state beside knit.exe
+    let portableDir = appDir / "data"
+    if canWriteDir(portableDir):
+      return portableDir       # portable mode: keep all state beside knit.exe
   when defined(windows):
     let base = getEnv("APPDATA", getHomeDir() / "AppData" / "Roaming")
     result = base / "knit"
@@ -88,9 +100,17 @@ proc readJson(path: string): JsonNode =
 
 proc writeJsonAtomic*(path: string, node: JsonNode) =
   createDir(path.parentDir)
-  let tmp = path & ".tmp"
+  let tmp = path & "." & $getMonoTime().ticks & ".tmp"
   writeFile(tmp, pretty(node, indent = 2))
-  moveFile(tmp, path)
+  for attempt in 0 .. 2:
+    try:
+      moveFile(tmp, path)
+      return
+    except OSError:
+      if attempt == 2:
+        try: removeFile(tmp) except CatchableError: discard
+        raise
+      sleep(30 * (attempt + 1))
 
 proc strList(node: JsonNode, key: string): seq[string] =
   result = @[]

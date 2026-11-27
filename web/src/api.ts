@@ -133,6 +133,19 @@ export const api = {
     }, 0);
   },
 
+  pollEvents: async (): Promise<void> => {
+    try {
+      const raw = await bridge().call('Shell.pollEvents');
+      if (typeof raw !== 'string' || raw === '[]') return;
+      const items = JSON.parse(raw) as { name: string; payload: string }[];
+      for (const item of items) {
+        window.knitEvent?.(item.name, item.payload);
+      }
+    } catch {
+      /* ignore transient poll errors */
+    }
+  },
+
   scan: (args: { root: string; excludeGlobs: string[]; scanDepth: number }) => call<ScanResult>('Repo.scan', args),
 
   status: (paths: string[]) => call<StatusResult>('Repo.status', { paths }),

@@ -56,6 +56,7 @@ nim c \
   --os:windows \
   --cpu:"$CPU" \
   --cc:clang \
+  --app:gui \
   -d:release \
   -d:knitNoLibgit2 \
   -d:knitEmbedWeb \
@@ -72,7 +73,11 @@ nim c \
   src/main.nim
 
 echo "[3/4] Assembling portable package..."
-cp "$OUT_DIR/knit.exe" "$ROOT/dist/knit.exe"
+if [ "$ARCH" = "arm64" ]; then
+  cp "$OUT_DIR/knit.exe" "$ROOT/dist/knit-arm64.exe"
+else
+  cp "$OUT_DIR/knit.exe" "$ROOT/dist/knit.exe"
+fi
 cp "$ROOT/../nimi/src/nimi/platform/windows/webview2/sdk/$LOADER_ARCH/WebView2Loader.dll" "$OUT_DIR/WebView2Loader.dll"
 touch "$OUT_DIR/knit.portable"
 

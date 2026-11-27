@@ -2396,6 +2396,18 @@ async function sendTerminalInput(): Promise<void> {
 function installHostEvents(): void {
   installEventBridge();
 
+  // Drain worker-thread events (git:command, agent:*) on the UI thread without
+  // cross-thread GC sharing in Nim refc. Fast while agent/terminal runs, gentle otherwise.
+  let pollBusy = false;
+  window.setInterval(() => {
+    if (pollBusy) return;
+    if (!state.agentRunning && !state.termSession && state.tab !== 'console') return;
+    pollBusy = true;
+    void api.pollEvents().finally(() => {
+      pollBusy = false;
+    });
+  }, 150);
+
   onEvent('repo:changed', (raw) => {
     const ev = raw as RepoChangedEvent;
     if (!ev?.path) return;
