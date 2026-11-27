@@ -401,6 +401,10 @@ when isMainModule:
         showFatalError("whenReady(defect)", $e.name & ": " & e.msg & "\n" & e.getStackTrace())
         app.quit())
 
+    # Initialize nimi's main-loop queueLock before any background IPC worker
+    # calls wakeMainThread() -> drainMain() (Windows CRITICAL_SECTION SIGSEGV
+    # if drainMain() runs before the first postMain()).
+    initLoop()
     app.run()
   except CatchableError as e:
     showFatalError("main", $e.name & ": " & e.msg & "\n" & e.getStackTrace())
