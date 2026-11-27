@@ -197,6 +197,26 @@ export const renderPathFilterPopover = (
     <div class="pop-foot">${icon('file-search')} 选择文件后只显示涉及该文件的提交</div>`;
 };
 
+export const renderPickaxePopover = (repo: Repo, query: string, isRegex: boolean): string => `
+  <div class="pop-head">
+    <span class="pop-title">代码内容搜索（Pickaxe）</span>
+    <span class="pop-sub">${esc(repo.name)}</span>
+  </div>
+  <div style="padding:10px 12px;display:flex;flex-direction:column;gap:8px">
+    <input class="field-input" id="pickaxeInput" value="${esc(query)}"
+      placeholder="搜索增删的代码片段或标识符…" autocomplete="off" spellcheck="false">
+    <label class="check-wrap">
+      <input type="checkbox" id="pickaxeRegex" ${isRegex ? 'checked' : ''}>
+      <span class="check-box">${icon('check')}</span>
+      <span>正则表达式模式（git log -G）</span>
+    </label>
+    <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:2px">
+      ${query ? `<button class="btn" type="button" id="pickaxeClearBtn" style="height:26px;font-size:11px">清除</button>` : ''}
+      <button class="btn primary" type="button" id="pickaxeApplyBtn" style="height:26px;font-size:11px">搜索提交</button>
+    </div>
+  </div>
+  <div class="pop-foot">${icon('code')} 默认使用 git log -S 精确匹配变更次数变化</div>`;
+
 export const renderHistoryPopover = (history: string[]): string => `
   <div class="pop-head">
     <span class="pop-title">最近提交信息</span>
@@ -266,7 +286,7 @@ export const renderCommandPalette = (
   <div class="filter-list">
     <button class="filter-option" type="button" data-cmd="branches">
       <span class="branch-ico">${icon('branch')}</span>
-      <span class="filter-option-main"><span>分支管理（切换 / 新建 / 合并 / 删除）…</span><span class="filter-option-sub">branch / checkout / merge</span></span>
+      <span class="filter-option-main"><span>分支 / Tags / Remotes 管理…</span><span class="filter-option-sub">branch / tag / remote</span></span>
     </button>
     <button class="filter-option" type="button" data-cmd="fetch">
       <span class="branch-ico">${icon('refresh')}</span>
@@ -276,13 +296,29 @@ export const renderCommandPalette = (
       <span class="branch-ico">${icon('arrow-down')}</span>
       <span class="filter-option-main"><span>Pull 当前分支</span><span class="filter-option-sub">git pull</span></span>
     </button>
+    <button class="filter-option" type="button" data-cmd="push">
+      <span class="branch-ico">${icon('arrow-up')}</span>
+      <span class="filter-option-main"><span>Push 当前分支</span><span class="filter-option-sub">git push</span></span>
+    </button>
     <button class="filter-option" type="button" data-cmd="pull-rebase">
       <span class="branch-ico">${icon('arrow-down')}</span>
       <span class="filter-option-main"><span>Pull --rebase 当前分支</span><span class="filter-option-sub">git pull --rebase</span></span>
     </button>
+    <button class="filter-option" type="button" data-cmd="reflog">
+      <span class="branch-ico">${icon('undo')}</span>
+      <span class="filter-option-main"><span>Reflog 历史与安全撤销…</span><span class="filter-option-sub">git reflog / 一键回退误操作</span></span>
+    </button>
+    <button class="filter-option" type="button" data-cmd="new-repo">
+      <span class="branch-ico">${icon('plus')}</span>
+      <span class="filter-option-main"><span>克隆 / 初始化仓库…</span><span class="filter-option-sub">git clone / git init</span></span>
+    </button>
     <button class="filter-option" type="button" data-cmd="worktree">
       <span class="branch-ico">${icon('folder')}</span>
       <span class="filter-option-main"><span>管理 Worktree / Hand…</span><span class="filter-option-sub">git worktree</span></span>
+    </button>
+    <button class="filter-option" type="button" data-cmd="settings">
+      <span class="branch-ico">${icon('gear')}</span>
+      <span class="filter-option-main"><span>应用设置…</span><span class="filter-option-sub">根目录 / 编辑器 / 终端 / 受保护分支</span></span>
     </button>
     ${
       commit

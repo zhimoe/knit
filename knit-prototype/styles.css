@@ -3674,3 +3674,14 @@ body.resizing-v .term-splitter.active {
 }
 .discard-list { background: var(--surface-subtle); border-color: var(--line); color: var(--text-soft); font-size: 11px; }
 .discard-warn { background: var(--red-dim); border-color: rgba(220, 38, 38, 0.22); color: var(--red); font-size: 11px; }
+
+
+/* v0.4.0 prototype sync */
+.top-chip-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 16px; height: 15px; padding: 0 4px; border-radius: 10px; font-family: var(--mono); font-size: 9.5px; font-weight: 650; margin-left: 2px; }
+.top-chip-badge.ahead { background: var(--green-dim); color: var(--green); }
+.top-chip-badge.behind { background: var(--red-dim); color: var(--red); }
+.sidebar-head-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 4px; }
+.sidebar-head-top .eyebrow { margin-bottom: 0; }
+.sidebar-add-btn { display: inline-flex; align-items: center; gap: 3px; height: 21px; padding: 0 7px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface); color: var(--text-soft); font-size: 10px; font-weight: 550; }
+.sidebar-add-btn .ic { width: 11px; height: 11px; }
+.sidebar-add-btn:hover { color: var(--accent-ink); border-color: var(--accent-border); background: var(--accent-dim); }

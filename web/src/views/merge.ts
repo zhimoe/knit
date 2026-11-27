@@ -154,10 +154,33 @@ export interface MergeModalOptions {
   activeBlock: number;
   editMode: boolean;
   customText: string | null;
+  syncScroll: boolean;
 }
 
 export const renderMergeModal = (opts: MergeModalOptions): string => {
-  const { state, segments, choices, activeBlock, editMode, customText } = opts;
+  const { state, segments, choices, activeBlock, editMode, customText, syncScroll } = opts;
+  if (state.binary) {
+    return `
+      <div class="modal-backdrop" data-modal-backdrop="1">
+        <div class="modal" role="dialog" aria-modal="true" aria-label="二进制冲突处理">
+          <div class="mhead">
+            <span class="mhead-title">${icon('merge')} 二进制冲突 · ${esc(state.path)}</span>
+            <span class="mbadge warn">Binary</span>
+            <span class="spacer"></span>
+            <button class="btn" type="button" id="mergeClose">关闭</button>
+          </div>
+          <div class="modal-body">
+            <div class="bin-conflict-card">
+              <p>该文件为二进制文件，无法按文本行合并。请选择要保留的版本，系统将自动检出并标记为已解决（<code>git add</code>）：</p>
+              <div class="bin-conflict-actions">
+                <button class="btn primary" type="button" data-merge-side="ours">← 保留 Yours（当前分支 HEAD）</button>
+                <button class="btn primary" type="button" data-merge-side="theirs">保留 Theirs（合入分支） →</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>`;
+  }
   const blocks = segments
     .filter((segment) => segment.kind === 'block' && segment.block)
     .map((segment) => segment.block as MergeBlock);
@@ -233,16 +256,19 @@ export const renderMergeModal = (opts: MergeModalOptions): string => {
           ${
             editMode
               ? `<button class="btn" type="button" id="mergeToggleEdit">${icon('undo')} 返回块选择</button>`
-              : `<button class="btn" type="button" id="autoResolve">自动解决简单冲突</button>
-                 <button class="btn" type="button" data-merge-nav="-1">◀ 上一处</button>
-                 <button class="btn" type="button" data-merge-nav="1">下一处 ▶</button>
+              : `<button class="btn" type="button" id="autoResolve">自动解决</button>
+                 <button class="btn" type="button" id="mergeAllOurs" title="所有冲突块采用左边 Yours">全部左边</button>
+                 <button class="btn" type="button" id="mergeAllTheirs" title="所有冲突块采用右边 Theirs">全部右边</button>
+                 <button class="btn" type="button" data-merge-nav="-1" title="上一处冲突">◀</button>
+                 <button class="btn" type="button" data-merge-nav="1" title="下一处冲突">▶</button>
+                 <button class="btn${syncScroll ? ' primary' : ''}" type="button" id="mergeSyncScroll" title="三栏比例同步滚动">同步滚动</button>
                  <button class="btn" type="button" id="mergeToggleEdit">${icon('edit')} 编辑结果</button>`
           }
           <button class="btn primary" type="button" id="mergeApply">应用并标记已解决</button>
           <button class="btn" type="button" id="mergeClose">取消</button>
         </div>
         <div class="mgrid">
-          <div class="mpane"><div class="mh">Yours · HEAD</div><div class="mb">${paneLines(oursLines, oursConf)}</div></div>
+          <div class="mpane"><div class="mh">Yours · HEAD</div><div class="mb" data-merge-scroll="0">${paneLines(oursLines, oursConf)}</div></div>
           <div class="mpane">
             <div class="mh">
               <span>Result（${editMode ? '直接编辑中' : '点块选择或切换编辑'}）</span>
@@ -253,9 +279,9 @@ export const renderMergeModal = (opts: MergeModalOptions): string => {
                   : ''
               }
             </div>
-            <div class="mb" style="${editMode ? 'padding:0;overflow:hidden;display:flex' : ''}">${resultPaneBody}</div>
+            <div class="mb" data-merge-scroll="1" style="${editMode ? 'padding:0;overflow:hidden;display:flex' : ''}">${resultPaneBody}</div>
           </div>
-          <div class="mpane"><div class="mh">Theirs · incoming</div><div class="mb">${paneLines(theirsLines, theirsConf)}</div></div>
+          <div class="mpane"><div class="mh">Theirs · incoming</div><div class="mb" data-merge-scroll="2">${paneLines(theirsLines, theirsConf)}</div></div>
         </div>
       </div>
     </div>`;

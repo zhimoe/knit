@@ -1,5 +1,5 @@
 import type { Draft } from '../draft';
-import type { DiffFile, FileEntry, Repo } from '../types';
+import type { DiffFile, FileEntry, ImagePreview, Repo } from '../types';
 import { absTime, icon } from './icons';
 import { buildPathTree, countTreeFiles, type PathTreeNode } from './details';
 import { renderDiffBlock } from './diff';
@@ -189,6 +189,10 @@ export interface ChangesDiffOptions {
   loading: boolean;
   renderAllRows: boolean;
   blameHtml?: string | null;
+  selectedLines?: Set<string>;
+  imagePreview?: ImagePreview | null;
+  imageMode?: 'side' | 'slider';
+  imageSlider?: number;
 }
 
 export function renderChangesDiffPanel(opts: ChangesDiffOptions): string {
@@ -214,6 +218,10 @@ export function renderChangesDiffPanel(opts: ChangesDiffOptions): string {
     leftLabel: 'HEAD',
     rightLabel: selected?.group === 'staged' ? '暂存区 · staged' : '工作区 · 未暂存',
     emptyText: '选择左侧文件查看工作区 diff。',
+    selectedLines: opts.selectedLines,
+    imagePreview: opts.imagePreview,
+    imageMode: opts.imageMode,
+    imageSlider: opts.imageSlider,
   });
 }
 

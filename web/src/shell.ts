@@ -43,6 +43,9 @@ export const shellHtml = `
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3.5 3.5 8 12 12.5 20.5 8 12 3.5Z"/><path d="M3.5 12.5 12 17l8.5-4.5"/><path d="M3.5 16.5 12 21l8.5-4.5"/></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></symbol>
     <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a6.8 6.8 0 0 0 11 11Z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.8 12h16.4M12 3.5a12.5 12.5 0 0 1 0 17M12 3.5a12.5 12.5 0 0 0 0 17"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24"><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m20.5 15.5-5-5L6 19.5"/></symbol>
   </svg>
 
   <div class="app" id="app">
@@ -68,12 +71,20 @@ export const shellHtml = `
         </button>
         <button class="top-chip" id="pullBtn" type="button" data-action="branch-pull" title="拉取当前分支（git pull）">
           <svg class="ic"><use href="#i-arrow-down"></use></svg><span>Pull</span>
+          <span class="top-chip-badge behind" id="pullBadge" hidden></span>
         </button>
-        <button class="top-chip" id="branchMgrBtn" type="button" data-action="open-branches" title="分支管理：切换 / 新建 / 合并 / 删除">
+        <button class="top-chip" id="pushBtn" type="button" data-action="branch-push" title="推送当前分支（git push）">
+          <svg class="ic"><use href="#i-arrow-up"></use></svg><span>Push</span>
+          <span class="top-chip-badge ahead" id="pushBadge" hidden></span>
+        </button>
+        <button class="top-chip" id="branchMgrBtn" type="button" data-action="open-branches" title="分支 / Tags / Remotes 管理">
           <svg class="ic"><use href="#i-branch"></use></svg><span>分支</span>
         </button>
         <button class="top-icon" id="rescanBtn" type="button" data-action="rescan" title="重新扫描根目录">
           <svg class="ic"><use href="#i-folder"></use></svg>
+        </button>
+        <button class="top-icon" id="settingsBtn" type="button" data-action="open-settings" title="应用设置" aria-label="应用设置">
+          <svg class="ic"><use href="#i-gear"></use></svg>
         </button>
         <button class="top-icon" id="themeToggleBtn" type="button" data-action="toggle-theme" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">
           <svg class="ic"><use href="#i-moon"></use></svg>
@@ -84,7 +95,12 @@ export const shellHtml = `
     <div class="workspace" id="workspace">
       <aside class="sidebar" aria-label="仓库列表">
         <div class="sidebar-head">
-          <div class="eyebrow">工作区</div>
+          <div class="sidebar-head-top">
+            <div class="eyebrow">工作区</div>
+            <button class="sidebar-add-btn" id="newRepoBtn" type="button" data-action="open-new-repo" title="克隆远端仓库或初始化新 Git 仓库">
+              <svg class="ic"><use href="#i-plus"></use></svg><span>克隆/新建</span>
+            </button>
+          </div>
           <button class="root-row" type="button" data-action="change-root" title="更换根目录与排除规则">
             <span class="root-icon"><svg class="ic"><use href="#i-folder"></use></svg></span>
             <span class="root-text">
@@ -164,6 +180,9 @@ export const shellHtml = `
                       <svg class="ic"><use href="#i-x"></use></svg>
                     </button>
                   </label>
+                  <button class="tool-pill" type="button" data-action="open-reflog" title="查看 Reflog 历史与安全撤销">
+                    <svg class="ic"><use href="#i-undo"></use></svg><span>Reflog</span>
+                  </button>
                   <button class="tool-pill" type="button" data-action="open-worktrees" title="Worktree / Hand 管理">
                     <svg class="ic"><use href="#i-plus"></use></svg><span>worktree</span>
                   </button>
@@ -207,6 +226,7 @@ export const shellHtml = `
   </div>
 
   <div id="popoverRoot"></div>
+  <div id="contextMenuRoot"></div>
   <div id="modalRoot"></div>
   <div id="toastRoot"></div>`;
 

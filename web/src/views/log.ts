@@ -44,6 +44,8 @@ export interface LogFilterState {
   author: string;
   time: 'all' | 'today' | 'week' | 'month';
   query: string;
+  pickaxe?: string;
+  pickaxeRegex?: boolean;
   total: number;
   shown: number;
   ms: number;
@@ -52,11 +54,17 @@ export interface LogFilterState {
   rebaseInProgress?: boolean;
   rebaseProgress?: string;
   mergeConflictCount?: number;
+  multiCount?: number;
 }
 
 export function hasActiveLogFilters(filter: LogFilterState): boolean {
   return Boolean(
-    filter.branchAll || filter.author || filter.time !== 'all' || filter.filterPath || filter.query.trim(),
+    filter.branchAll ||
+      filter.author ||
+      filter.time !== 'all' ||
+      filter.filterPath ||
+      filter.query.trim() ||
+      filter.pickaxe?.trim(),
   );
 }
 
@@ -85,12 +93,16 @@ export function renderLogFilters(repo: Repo, filter: LogFilterState): string {
     month: '最近 30 天',
   }[filter.time];
   const pathValue = filter.filterPath ? basenameOf(filter.filterPath) : '全部路径';
+  const pickaxeValue = filter.pickaxe?.trim()
+    ? `${filter.pickaxeRegex ? '/' : ''}${filter.pickaxe.trim()}${filter.pickaxeRegex ? '/' : ''}`
+    : '代码搜索';
 
   const chips = [
     { type: 'branch', label: '分支', value: branchValue, active: filter.branchAll, ic: 'branch' },
     { type: 'author', label: '作者', value: authorValue, active: Boolean(filter.author), ic: 'user' },
     { type: 'time', label: '时间', value: timeValue, active: filter.time !== 'all', ic: 'clock' },
     { type: 'path', label: '路径', value: pathValue, active: Boolean(filter.filterPath), ic: 'file-search' },
+    { type: 'pickaxe', label: '代码', value: pickaxeValue, active: Boolean(filter.pickaxe?.trim()), ic: 'code' },
   ];
 
   return (
@@ -114,8 +126,9 @@ export function renderLogFilters(repo: Repo, filter: LogFilterState): string {
 }
 
 export function renderLogBanner(filter: LogFilterState): string {
+  let html = '';
   if (filter.rebaseInProgress) {
-    return `
+    html += `
       <div class="log-banner">
         <span>⚠ 交互式变基进行中${filter.rebaseProgress ? `（${esc(filter.rebaseProgress)}）` : ''}</span>
         <span class="spacer"></span>
@@ -123,9 +136,8 @@ export function renderLogBanner(filter: LogFilterState): string {
         <button class="btn" type="button" data-act="rebase-skip">跳过</button>
         <button class="btn danger" type="button" data-act="rebase-abort">中止</button>
       </div>`;
-  }
-  if (filter.mergeConflictCount && filter.mergeConflictCount > 0) {
-    return `
+  } else if (filter.mergeConflictCount && filter.mergeConflictCount > 0) {
+    html += `
       <div class="log-banner">
         <span>⚠ 合并冲突：${filter.mergeConflictCount} 个文件待解决</span>
         <span class="spacer"></span>
@@ -133,25 +145,41 @@ export function renderLogBanner(filter: LogFilterState): string {
         <button class="btn danger" type="button" data-act="merge-abort">中止合并</button>
       </div>`;
   }
-  return '';
+  if (filter.multiCount && filter.multiCount >= 2) {
+    html += `
+      <div class="log-banner multi-banner">
+        <span>已多选 <b>${filter.multiCount}</b> 个提交（⌘/Shift 点击）</span>
+        <span class="spacer"></span>
+        ${
+          filter.multiCount === 2
+            ? `<button class="btn primary" type="button" data-action="compare-selected">对比范围 Diff</button>`
+            : ''
+        }
+        <button class="btn" type="button" data-action="batch-cherry-pick">批量 Cherry-pick (${filter.multiCount})</button>
+        <button class="btn" type="button" data-action="clear-multi-select">取消多选</button>
+      </div>`;
+  }
+  return html;
 }
 
 function renderCommitRow(
   commit: Commit,
   index: number,
   selectedIndex: number,
+  selectedHashes: Set<string> | undefined,
   graph: Graph,
   query: string,
   primaryColor: string,
 ): string {
-  const selected = index === selectedIndex;
+  const isMulti = Boolean(selectedHashes && selectedHashes.size > 1 && selectedHashes.has(commit.hash));
+  const selected = index === selectedIndex || isMulti;
   const parsed = commit.refs.map(parseRef);
   const localRefs = commit.refs.filter((_, i) => parsed[i]?.type !== 'remote');
   const displayRefs = localRefs.length ? localRefs : commit.refs.slice(0, 1);
   const refs = renderRefPills(displayRefs, 2);
   const merge = commit.parents.length > 1 ? `<span class="merge-mark" title="merge commit">${icon('merge')}</span>` : '';
   return `
-    <div class="commit-row ${selected ? 'selected' : ''}" role="button" tabindex="-1"
+    <div class="commit-row ${index === selectedIndex ? 'selected' : ''}${isMulti ? ' multi-selected' : ''}" role="button" tabindex="-1"
       data-commit="${index}" data-hash="${esc(commit.hash)}"
       title="${esc(commit.subject)} · ${esc(commit.shortHash)} — ${esc(absTime(commit.committedAt))}">
       <span class="lane-cell ${graph.clipped ? 'clipped' : ''}">${graphSvg(graph.rows[index], graph.width, selected, primaryColor)}</span>
@@ -186,6 +214,7 @@ export function renderLogRows(
     viewportHeight?: number;
     hasMore?: boolean;
     loadingMore?: boolean;
+    selectedHashes?: Set<string>;
   } = {},
 ): string {
   if (!commits.length) {
@@ -214,8 +243,9 @@ export function renderLogRows(
 
   if (commits.length <= VIRTUAL_THRESHOLD) {
     return (
-      commits.map((commit, index) => renderCommitRow(commit, index, selectedIndex, graph, query, primaryColor)).join('') +
-      footer
+      commits
+        .map((commit, index) => renderCommitRow(commit, index, selectedIndex, opts.selectedHashes, graph, query, primaryColor))
+        .join('') + footer
     );
   }
 
@@ -228,7 +258,7 @@ export function renderLogRows(
 
   let slice = '';
   for (let i = start; i < end; i += 1) {
-    slice += renderCommitRow(commits[i], i, selectedIndex, graph, query, primaryColor);
+    slice += renderCommitRow(commits[i], i, selectedIndex, opts.selectedHashes, graph, query, primaryColor);
   }
   if (end >= commits.length && footer) slice += footer;
 
@@ -249,7 +279,7 @@ export function renderLogFooter(filter: LogFilterState): string {
         ? `<button class="foot-btn" type="button" data-act="loadmorelog">${filter.loadingMore ? '加载中…' : '加载更早的提交'}</button>`
         : ''
     }
-    <span class="foot-hint"><kbd>↑</kbd><kbd>↓</kbd> 导航</span>`;
+    <span class="foot-hint"><kbd>↑</kbd><kbd>↓</kbd> 导航 · <kbd>⌘</kbd> 多选</span>`;
 }
 
 export function renderQuickChanges(

@@ -1,4 +1,4 @@
-import type { DiffFile, DiffRow, FileEntry, Hunk } from '../types';
+import type { DiffFile, DiffRow, FileEntry, Hunk, ImagePreview } from '../types';
 import { basenameOf, dirnameOf, icon, renderHighlightedLine } from './icons';
 import { esc } from './util';
 
@@ -17,6 +17,10 @@ export interface DiffBlockOptions {
   rightLabel: string;
   emptyText?: string;
   hideToolbar?: boolean;
+  selectedLines?: Set<string>;
+  imagePreview?: ImagePreview | null;
+  imageMode?: 'side' | 'slider';
+  imageSlider?: number;
 }
 
 const ROW_CAP = 240;
@@ -29,9 +33,16 @@ export const formatSize = (bytes: number): string => {
 
 const lineNo = (value: number | undefined): string => (value && value > 0 ? String(value) : '');
 
+export const lineSelectKey = (hunkIndex: number, rowIndex: number): string => `${hunkIndex}:${rowIndex}`;
+
+interface IndexedRow {
+  row: DiffRow;
+  rowIndex: number;
+}
+
 interface SplitPair {
-  left: DiffRow | null;
-  right: DiffRow | null;
+  left: IndexedRow | null;
+  right: IndexedRow | null;
   isChange: boolean;
 }
 
@@ -41,18 +52,18 @@ function pairSplitRows(rows: DiffRow[]): SplitPair[] {
   while (i < rows.length) {
     const cur = rows[i];
     if (cur.t === 'ctx') {
-      out.push({ left: cur, right: cur, isChange: false });
+      out.push({ left: { row: cur, rowIndex: i }, right: { row: cur, rowIndex: i }, isChange: false });
       i += 1;
       continue;
     }
-    const dels: DiffRow[] = [];
-    const adds: DiffRow[] = [];
+    const dels: IndexedRow[] = [];
+    const adds: IndexedRow[] = [];
     while (i < rows.length && rows[i].t === 'del') {
-      dels.push(rows[i]);
+      dels.push({ row: rows[i], rowIndex: i });
       i += 1;
     }
     while (i < rows.length && rows[i].t === 'add') {
-      adds.push(rows[i]);
+      adds.push({ row: rows[i], rowIndex: i });
       i += 1;
     }
     const count = Math.max(dels.length, adds.length);
@@ -67,6 +78,76 @@ function pairSplitRows(rows: DiffRow[]): SplitPair[] {
   return out;
 }
 
+function renderImageDiff(preview: ImagePreview, mode: 'side' | 'slider', slider: number): string {
+  const hasBefore = Boolean(preview.beforeDataUrl);
+  const hasAfter = Boolean(preview.afterDataUrl);
+  const canSlider = hasBefore && hasAfter;
+  const activeMode = canSlider ? mode : 'side';
+
+  const modeBar = `
+    <div class="img-diff-bar">
+      <span class="img-diff-meta">
+        ${icon('image')}
+        <span>图片预览（${esc(preview.mime)}）</span>
+        ${preview.beforeBytes ? `<span class="sep">·</span><span>修改前 ${formatSize(preview.beforeBytes)}</span>` : ''}
+        ${preview.afterBytes ? `<span class="sep">·</span><span>修改后 ${formatSize(preview.afterBytes)}</span>` : ''}
+      </span>
+      <span class="spacer"></span>
+      ${
+        canSlider
+          ? `<span class="diff-mode-seg" role="group" aria-label="图片对比模式">
+              <button class="diff-mode-btn${activeMode === 'side' ? ' active' : ''}" type="button" data-img-mode="side" title="并排对比">并排</button>
+              <button class="diff-mode-btn${activeMode === 'slider' ? ' active' : ''}" type="button" data-img-mode="slider" title="滑块叠层对比">滑块</button>
+            </span>`
+          : ''
+      }
+      <button class="btn" type="button" data-act="locate" style="height:24px;font-size:10.5px">外部打开</button>
+    </div>`;
+
+  if (activeMode === 'slider' && canSlider) {
+    const pct = Math.max(0, Math.min(100, slider));
+    return `
+      <div class="diff-scroll">
+        ${modeBar}
+        <div class="img-slider-wrap">
+          <div class="img-slider-stage">
+            <img class="img-slider-after" src="${preview.afterDataUrl}" alt="修改后">
+            <div class="img-slider-before-clip" style="clip-path:inset(0 ${100 - pct}% 0 0)">
+              <img class="img-slider-before" src="${preview.beforeDataUrl}" alt="修改前">
+            </div>
+            <div class="img-slider-divider" style="left:${pct}%"></div>
+            <span class="img-tag left">修改前</span>
+            <span class="img-tag right">修改后</span>
+          </div>
+          <div class="img-slider-ctrl">
+            <span>修改前</span>
+            <input id="imgDiffSlider" type="range" min="0" max="100" value="${pct}" aria-label="图片对比滑块">
+            <span>修改后</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="diff-scroll">
+      ${modeBar}
+      <div class="img-side-grid">
+        <div class="img-card">
+          <div class="img-card-head">修改前 ${preview.beforeBytes ? `<span>${formatSize(preview.beforeBytes)}</span>` : ''}</div>
+          <div class="img-card-body">
+            ${hasBefore ? `<img src="${preview.beforeDataUrl}" alt="修改前">` : '<span class="img-none">（新增图片）</span>'}
+          </div>
+        </div>
+        <div class="img-card">
+          <div class="img-card-head">修改后 ${preview.afterBytes ? `<span>${formatSize(preview.afterBytes)}</span>` : ''}</div>
+          <div class="img-card-body">
+            ${hasAfter ? `<img src="${preview.afterDataUrl}" alt="修改后">` : '<span class="img-none">（已删除图片）</span>'}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
 function renderHunks(diff: DiffFile, options: DiffBlockOptions): string {
   const hunks = diff.hunks;
   if (!hunks.length) return '';
@@ -76,6 +157,10 @@ function renderHunks(diff: DiffFile, options: DiffBlockOptions): string {
   let renderedRows = 0;
   let html = '';
   let changeRun = -1;
+  const selectedLines = options.selectedLines ?? new Set<string>();
+  const canStage = options.stageGroup !== null;
+  const isStaged = options.stageGroup === 'staged';
+  const isUntracked = Boolean(options.file?.untracked);
 
   for (let h = 0; h < hunks.length; h += 1) {
     const hunk = hunks[h];
@@ -87,17 +172,44 @@ function renderHunks(diff: DiffFile, options: DiffBlockOptions): string {
         html += `<div class="diff-fold" data-fold="${h}">⋯ ${gap} 行未变更（点击展开上下文）</div>`;
       }
     }
-    const canStage = options.stageGroup !== null;
+
+    let selectedInHunk = 0;
+    if (canStage && selectedLines.size > 0) {
+      for (let r = 0; r < hunk.rows.length; r += 1) {
+        if (selectedLines.has(lineSelectKey(h, r))) selectedInHunk += 1;
+      }
+    }
+
+    const lineBtns =
+      canStage && selectedInHunk > 0 && !isUntracked
+        ? `<button class="hunk-stage-btn line-act" type="button" data-stage-lines="${h}">${
+            isStaged ? `↺ 撤销选中 ${selectedInHunk} 行` : `✓ 暂存选中 ${selectedInHunk} 行`
+          }</button>${
+            !isStaged
+              ? `<button class="hunk-stage-btn danger" type="button" data-discard-lines="${h}" title="丢弃选中的 ${selectedInHunk} 行（先保存快照）">丢弃 ${selectedInHunk} 行</button>`
+              : ''
+          }`
+        : '';
+
     const stageBtn = canStage
-      ? `<button class="hunk-stage-btn${options.stageGroup === 'staged' ? ' staged' : ''}" type="button" data-stage-hunk="${h}">${
-          options.stageGroup === 'staged' ? '↺ 撤销暂存此块' : '✓ 暂存此块'
-        }</button>`
+      ? `<span class="hunk-actions">
+          ${lineBtns}
+          <button class="hunk-stage-btn${isStaged ? ' staged' : ''}" type="button" data-stage-hunk="${h}">${
+            isStaged ? '↺ 撤销暂存此块' : '✓ 暂存此块'
+          }</button>
+          ${
+            !isStaged && !isUntracked
+              ? `<button class="hunk-stage-btn danger" type="button" data-discard-hunk="${h}" title="丢弃此代码块更改（先保存快照）">丢弃此块</button>`
+              : ''
+          }
+        </span>`
       : '';
     html += `<div class="diff-hunk"><span>${esc(hunk.header)}</span>${stageBtn}</div>`;
 
     if (options.mode === 'unified') {
       let prevKind = '';
-      for (const row of hunk.rows) {
+      for (let r = 0; r < hunk.rows.length; r += 1) {
+        const row = hunk.rows[r];
         if (budget <= 0) break;
         budget -= 1;
         renderedRows += 1;
@@ -106,11 +218,15 @@ function renderHunks(diff: DiffFile, options: DiffBlockOptions): string {
         const marker = isChange && (prevKind === '' || prevKind === 'ctx') ? ` data-change="${changeRun}"` : '';
         prevKind = row.t;
         const sign = row.t === 'add' ? '+' : row.t === 'del' ? '−' : ' ';
+        const selectable = canStage && isChange && !isUntracked;
+        const selKey = lineSelectKey(h, r);
+        const isSel = selectable && selectedLines.has(selKey);
+        const selectAttr = selectable ? ` data-line-select="${selKey}" title="点击选中/取消该行（Shift 连选）"` : '';
         html += `
-          <div class="uni-row ${row.t}"${marker}>
-            <span class="diff-ln">${esc(lineNo(row.oldNo))}</span>
-            <span class="diff-ln right">${esc(lineNo(row.newNo))}</span>
-            <span class="uni-sign ${row.t}">${sign}</span>
+          <div class="uni-row ${row.t}${selectable ? ' selectable' : ''}${isSel ? ' line-selected' : ''}"${marker}>
+            <span class="diff-ln"${selectAttr}>${esc(lineNo(row.oldNo))}</span>
+            <span class="diff-ln right"${selectAttr}>${esc(lineNo(row.newNo))}</span>
+            <span class="uni-sign ${row.t}"${selectAttr}>${isSel ? '✓' : sign}</span>
             <span class="diff-code">${renderHighlightedLine(row.text, row.hl)}</span>
           </div>`;
       }
@@ -126,17 +242,27 @@ function renderHunks(diff: DiffFile, options: DiffBlockOptions): string {
         prevChange = pair.isChange;
         const left = pair.left;
         const right = pair.right;
-        const leftDel = left && left.t === 'del';
-        const rightAdd = right && right.t === 'add';
+        const leftDel = Boolean(left && left.row.t === 'del');
+        const rightAdd = Boolean(right && right.row.t === 'add');
+
+        const leftSelKey = left && leftDel && canStage && !isUntracked ? lineSelectKey(h, left.rowIndex) : '';
+        const rightSelKey = right && rightAdd && canStage && !isUntracked ? lineSelectKey(h, right.rowIndex) : '';
+        const leftSel = Boolean(leftSelKey && selectedLines.has(leftSelKey));
+        const rightSel = Boolean(rightSelKey && selectedLines.has(rightSelKey));
+
         html += `
           <div class="diff-row"${marker}>
-            <span class="diff-ln ${leftDel ? 'del' : ''}">${esc(lineNo(left?.oldNo))}</span>
-            <span class="diff-code left ${leftDel ? 'del' : ''} ${!left ? 'fill' : ''}">${
-              left ? renderHighlightedLine(left.text, left.hl) : ' '
+            <span class="diff-ln ${leftDel ? 'del' : ''}${leftSelKey ? ' selectable' : ''}${leftSel ? ' line-selected' : ''}"${
+              leftSelKey ? ` data-line-select="${leftSelKey}" title="点击选中/取消该行（Shift 连选）"` : ''
+            }>${leftSel ? '✓' : esc(lineNo(left?.row.oldNo))}</span>
+            <span class="diff-code left ${leftDel ? 'del' : ''} ${!left ? 'fill' : ''}${leftSel ? ' line-selected' : ''}">${
+              left ? renderHighlightedLine(left.row.text, left.row.hl) : ' '
             }</span>
-            <span class="diff-ln right ${rightAdd ? 'add' : ''}">${esc(lineNo(right?.newNo))}</span>
-            <span class="diff-code right ${rightAdd ? 'add' : ''} ${!right ? 'fill' : ''}">${
-              right ? renderHighlightedLine(right.text, right.hl) : ' '
+            <span class="diff-ln right ${rightAdd ? 'add' : ''}${rightSelKey ? ' selectable' : ''}${rightSel ? ' line-selected' : ''}"${
+              rightSelKey ? ` data-line-select="${rightSelKey}" title="点击选中/取消该行（Shift 连选）"` : ''
+            }>${rightSel ? '✓' : esc(lineNo(right?.row.newNo))}</span>
+            <span class="diff-code right ${rightAdd ? 'add' : ''} ${!right ? 'fill' : ''}${rightSel ? ' line-selected' : ''}">${
+              right ? renderHighlightedLine(right.row.text, right.row.hl) : ' '
             }</span>
           </div>`;
       }
@@ -159,13 +285,17 @@ export function renderDiffBodyOnly(options: DiffBlockOptions): string {
     )}</span></div></div>`;
   }
   const diff = options.diff;
+  if (options.imagePreview?.supported && !options.imagePreview.tooLarge && (options.imagePreview.beforeDataUrl || options.imagePreview.afterDataUrl)) {
+    return renderImageDiff(options.imagePreview, options.imageMode ?? 'side', options.imageSlider ?? 50);
+  }
   if (diff.binary) {
     const size = diff.size > 0 ? ` · ${formatSize(diff.size)}` : '';
+    const extra = options.imagePreview?.tooLarge ? '（图片体积超过 150 KB 预览上限）' : '';
     return `
       <div class="diff-scroll">
         <div class="diff-empty">
           ${icon('file')}
-          <span>二进制文件，无法显示差异（${esc(diff.path)}${size}）</span>
+          <span>二进制文件，无法显示差异（${esc(diff.path)}${size}）${extra}</span>
           <button class="btn" type="button" data-act="locate">在外部程序打开</button>
         </div>
       </div>`;
@@ -280,6 +410,69 @@ export const buildHunkPatch = (file: FileEntry, hunk: Hunk): string => {
     const prefix = row.t === 'add' ? '+' : row.t === 'del' ? '-' : ' ';
     patch += `${prefix}${row.text}\n`;
   }
+  return patch;
+};
+
+/**
+ * Build a valid unified diff patch containing only the selected +/- rows inside a hunk.
+ * - mode === 'stage': forward apply to index (`git apply --cached`)
+ * - mode === 'unstage': reverse apply to index (`git apply --cached --reverse`)
+ * - mode === 'discard': reverse apply to working tree (`git apply --reverse`)
+ */
+export const buildLinesPatch = (
+  file: FileEntry,
+  hunk: Hunk,
+  hunkIndex: number,
+  selectedLines: Set<string>,
+  mode: 'stage' | 'unstage' | 'discard',
+): string => {
+  const oldPath = file.oldPath && file.oldPath !== file.path ? file.oldPath : file.path;
+  const reverse = mode === 'unstage' || mode === 'discard';
+  const outLines: string[] = [];
+  let oldCount = 0;
+  let newCount = 0;
+  let hasChanges = false;
+
+  for (let r = 0; r < hunk.rows.length; r += 1) {
+    const row = hunk.rows[r];
+    const selected = selectedLines.has(lineSelectKey(hunkIndex, r));
+    if (row.t === 'ctx') {
+      outLines.push(` ${row.text}`);
+      oldCount += 1;
+      newCount += 1;
+    } else if (row.t === 'add') {
+      if (selected) {
+        outLines.push(`+${row.text}`);
+        newCount += 1;
+        hasChanges = true;
+      } else if (reverse) {
+        // When reversing (unstage/discard), unselected '+' already exists in the target state, so keep as context.
+        outLines.push(` ${row.text}`);
+        oldCount += 1;
+        newCount += 1;
+      }
+      // When forward staging, unselected '+' is omitted completely.
+    } else if (row.t === 'del') {
+      if (selected) {
+        outLines.push(`-${row.text}`);
+        oldCount += 1;
+        hasChanges = true;
+      } else if (!reverse) {
+        // When forward staging, unselected '-' still exists in both index and target, so keep as context.
+        outLines.push(` ${row.text}`);
+        oldCount += 1;
+        newCount += 1;
+      }
+      // When reversing (unstage/discard), unselected '-' does not exist in target, so omit it.
+    }
+  }
+
+  if (!hasChanges) return '';
+  let patch = `diff --git a/${oldPath} b/${file.path}\n`;
+  patch += `--- a/${oldPath}\n`;
+  patch += `+++ b/${file.path}\n`;
+  patch += `@@ -${hunk.oldStart},${oldCount} +${hunk.newStart},${newCount} @@\n`;
+  patch += `${outLines.join('\n')}\n`;
   return patch;
 };
 

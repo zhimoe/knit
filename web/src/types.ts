@@ -280,3 +280,42 @@ export interface GitCommandEvent {
 export interface RepoChangedEvent {
   path: string;
 }
+
+export interface RemoteInfo {
+  name: string;
+  fetchUrl: string;
+  pushUrl: string;
+}
+
+export interface ReflogEntry {
+  hash: string;
+  shortHash: string;
+  selector: string;
+  action: string;
+  epochMs: number;
+}
+
+export interface ImagePreview {
+  supported: boolean;
+  mime: string;
+  beforeDataUrl: string;
+  afterDataUrl: string;
+  beforeBytes: number;
+  afterBytes: number;
+  tooLarge: boolean;
+}
+
+export interface CompareSelection {
+  base: Commit;
+  head: Commit;
+}
+
+export interface ContextMenuItem {
+  id: string;
+  label?: string;
+  icon?: string;
+  shortcut?: string;
+  danger?: boolean;
+  disabled?: boolean;
+  divider?: boolean;
+}

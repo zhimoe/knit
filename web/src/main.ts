@@ -12,17 +12,22 @@ import type {
   AgentStartedEvent,
   BlameLine,
   Commit,
+  CompareSelection,
   ConsoleEntry,
+  ContextMenuItem,
   DiffFile,
   FileEntry,
   GitCommandEvent,
   GitRef,
   HostState,
+  ImagePreview,
   MergeState,
   Mode,
   RebaseAction,
   RebaseCommit,
   RebaseState,
+  ReflogEntry,
+  RemoteInfo,
   Repo,
   RepoChangedEvent,
   ShelfItem,
@@ -33,7 +38,7 @@ import { clearDraft, loadDraft, loadUi, messageHistory, pushMessageHistory, save
 import { mountShell } from './shell';
 import { agentPromptLine, renderTerminalPanel, type AgentLine } from './views/agent';
 import { renderBlamePanel } from './views/blame';
-import { renderBranchModal } from './views/branch';
+import { renderBranchModal, type BranchModalTab } from './views/branch';
 import {
   renderChangesDiffPanel,
   renderChangesHead,
@@ -43,8 +48,9 @@ import {
   stagedFiles,
 } from './views/changes';
 import { renderConsole, renderConsoleRows } from './views/console';
+import { mountContextMenu } from './views/contextmenu';
 import { renderDetails } from './views/details';
-import { buildHunkPatch } from './views/diff';
+import { buildHunkPatch, buildLinesPatch, lineSelectKey } from './views/diff';
 import { renderFullDiffPage } from './views/fulldiff';
 import { basenameOf, icon, langMeta, shortPath, tint } from './views/icons';
 import {
@@ -74,12 +80,16 @@ import {
   renderCommandPalette,
   renderHistoryPopover,
   renderPathFilterPopover,
+  renderPickaxePopover,
   renderRootModal,
   renderShelfStatPopover,
   renderSkillsPopover,
   renderTimeFilterPopover,
 } from './views/popover';
 import { renderRebaseModal } from './views/rebase';
+import { renderReflogModal } from './views/reflog';
+import { renderRepoModal } from './views/repo-modal';
+import { renderSettingsModal } from './views/settings';
 import { renderShelf } from './views/shelf';
 import { renderSidebar, visibleRepos } from './views/sidebar';
 import { changeKey, dirtyTotal, esc, stripAnsi } from './views/util';
@@ -95,12 +105,27 @@ interface MergeView {
   active: number;
   editMode: boolean;
   customText: string | null;
+  syncScroll: boolean;
 }
 
 interface BranchView {
+  tab: BranchModalTab;
   refs: GitRef[];
+  remotes: RemoteInfo[];
   busy: boolean;
   filter: string;
+  editingRemote: string | null;
+}
+
+interface ReflogView {
+  entries: ReflogEntry[];
+  loading: boolean;
+  busy: boolean;
+}
+
+interface RepoModalView {
+  tab: 'clone' | 'init';
+  busy: boolean;
 }
 
 interface RebaseView {
@@ -141,6 +166,9 @@ type ActiveModal =
   | { kind: 'rebase' }
   | { kind: 'worktree' }
   | { kind: 'root' }
+  | { kind: 'settings'; saving: boolean }
+  | { kind: 'reflog' }
+  | { kind: 'repo' }
   | { kind: 'discard'; data: DiscardModalState }
   | { kind: 'confirm'; data: ConfirmState }
   | null;
@@ -170,9 +198,13 @@ interface AppState {
   worktreeCollapsed: Set<string>;
   fileFilter: string | null;
   filterQuery: string;
+  pickaxeQuery: string;
+  pickaxeRegex: boolean;
   authorFilter: string;
   timeFilter: 'all' | 'today' | 'week' | 'month';
   branchAll: boolean;
+  selectedHashes: Set<string>;
+  compare: CompareSelection | null;
   diff: DiffFile | null;
   diffMode: 'split' | 'unified';
   ignoreWhitespace: boolean;
@@ -181,16 +213,23 @@ interface AppState {
   changes: FileEntry[];
   selectedChangeKey: string;
   changeDiff: DiffFile | null;
+  selectedDiffLines: Set<string>;
+  lastLineSelect: { hunk: number; row: number } | null;
+  imagePreview: ImagePreview | null;
+  imageMode: 'side' | 'slider';
+  imageSlider: number;
   msg: string;
   amend: boolean;
   draft: { text: string; ts: number } | null;
   busy: string | null;
-  remoteBusy: 'fetch' | 'pull' | null;
+  remoteBusy: 'fetch' | 'pull' | 'push' | null;
   lastRefresh: number;
   console: ConsoleEntry[];
   shelf: ShelfItem[];
   merge: MergeView | null;
   branchModal: BranchView | null;
+  reflog: ReflogView | null;
+  repoModal: RepoModalView | null;
   rebase: RebaseView | null;
   rebaseState: RebaseState | null;
   worktree: WorktreeView | null;
@@ -267,9 +306,13 @@ const state: AppState = {
   worktreeCollapsed: new Set(),
   fileFilter: null,
   filterQuery: '',
+  pickaxeQuery: '',
+  pickaxeRegex: false,
   authorFilter: '',
   timeFilter: 'all',
   branchAll: false,
+  selectedHashes: new Set(),
+  compare: null,
   diff: null,
   diffMode: 'split',
   ignoreWhitespace: false,
@@ -278,6 +321,11 @@ const state: AppState = {
   changes: [],
   selectedChangeKey: '',
   changeDiff: null,
+  selectedDiffLines: new Set(),
+  lastLineSelect: null,
+  imagePreview: null,
+  imageMode: 'side',
+  imageSlider: 50,
   msg: '',
   amend: false,
   draft: null,
@@ -288,6 +336,8 @@ const state: AppState = {
   shelf: [],
   merge: null,
   branchModal: null,
+  reflog: null,
+  repoModal: null,
   rebase: null,
   rebaseState: null,
   worktree: null,
@@ -410,6 +460,8 @@ function closeModal(): void {
   state.modal = null;
   state.merge = null;
   state.branchModal = null;
+  state.reflog = null;
+  state.repoModal = null;
   state.rebase = null;
   state.worktree = null;
   renderModal();
@@ -480,17 +532,44 @@ function renderModal(): void {
       activeBlock: state.merge.active,
       editMode: state.merge.editMode,
       customText: state.merge.customText,
+      syncScroll: state.merge.syncScroll,
     });
+    if (state.merge.syncScroll && !state.merge.state.binary) bindMergeSyncScroll(root);
     return;
   }
   if (m.kind === 'branch' && state.branchModal && repo) {
     root.innerHTML = renderBranchModal({
       repo,
+      tab: state.branchModal.tab,
       refs: state.branchModal.refs,
+      remotes: state.branchModal.remotes,
       protectedBranches: state.host?.protectedBranches ?? ['main', 'master'],
       defaultStart: currentCommit()?.shortHash ?? 'HEAD',
       busy: state.branchModal.busy,
       filter: state.branchModal.filter,
+      editingRemote: state.branchModal.editingRemote,
+    });
+    return;
+  }
+  if (m.kind === 'settings' && state.host) {
+    const theme = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+    root.innerHTML = renderSettingsModal({ host: state.host, theme, saving: m.saving });
+    return;
+  }
+  if (m.kind === 'reflog' && state.reflog && repo) {
+    root.innerHTML = renderReflogModal({
+      repo,
+      entries: state.reflog.entries,
+      loading: state.reflog.loading,
+      busy: state.reflog.busy,
+    });
+    return;
+  }
+  if (m.kind === 'repo' && state.repoModal) {
+    root.innerHTML = renderRepoModal({
+      tab: state.repoModal.tab,
+      defaultParentDir: state.host?.root ?? '',
+      busy: state.repoModal.busy,
     });
     return;
   }
@@ -591,10 +670,25 @@ function applySidebarCollapsed(): void {
 }
 
 function renderTopBarState(): void {
+  const repo = selectedRepo();
   const fetchBtn = document.getElementById('fetchBtn');
   const pullBtn = document.getElementById('pullBtn');
+  const pushBtn = document.getElementById('pushBtn');
+  const pullBadge = document.getElementById('pullBadge');
+  const pushBadge = document.getElementById('pushBadge');
   if (fetchBtn) fetchBtn.classList.toggle('busy', state.remoteBusy === 'fetch');
   if (pullBtn) pullBtn.classList.toggle('busy', state.remoteBusy === 'pull');
+  if (pushBtn) pushBtn.classList.toggle('busy', state.remoteBusy === 'push');
+  if (pullBadge) {
+    const behind = repo?.behind ?? 0;
+    pullBadge.hidden = behind <= 0;
+    pullBadge.textContent = behind > 0 ? `↓${behind}` : '';
+  }
+  if (pushBadge) {
+    const ahead = repo?.ahead ?? 0;
+    pushBadge.hidden = ahead <= 0;
+    pushBadge.textContent = ahead > 0 ? `↑${ahead}` : '';
+  }
 }
 
 function renderViewBar(): void {
@@ -682,6 +776,8 @@ function currentLogFilter(commits: Commit[]): LogFilterState {
     author: state.authorFilter,
     time: state.timeFilter,
     query: state.filterQuery,
+    pickaxe: state.pickaxeQuery,
+    pickaxeRegex: state.pickaxeRegex,
     total: state.commits.length,
     shown: commits.length,
     ms: state.logMs,
@@ -693,6 +789,7 @@ function currentLogFilter(commits: Commit[]): LogFilterState {
         ? `${state.rebaseState.msgNum}/${state.rebaseState.end}`
         : undefined,
     mergeConflictCount: conflictCount,
+    multiCount: state.selectedHashes.size,
   };
 }
 
@@ -741,6 +838,7 @@ function renderLogArea(): void {
     viewportHeight: listEl.clientHeight || 600,
     hasMore: filter.hasMore,
     loadingMore: filter.loadingMore,
+    selectedHashes: state.selectedHashes,
   });
   if (prevScrollTop > 0) listEl.scrollTop = prevScrollTop;
 
@@ -770,7 +868,8 @@ function renderDetailsArea(): void {
   }
   const blameHtml = state.blame ? renderBlamePanel(state.blame) : null;
   details.innerHTML = renderDetails({
-    commit: currentCommit(),
+    commit: state.compare ? null : currentCommit(),
+    compare: state.compare,
     repo,
     allCommits: state.commits,
     files: state.commitFiles,
@@ -784,6 +883,9 @@ function renderDetailsArea(): void {
     loadingDiff: state.busy === '读取 diff…',
     renderAllRows: showAllRows('commit'),
     blameHtml,
+    imagePreview: state.imagePreview,
+    imageMode: state.imageMode,
+    imageSlider: state.imageSlider,
   });
 }
 
@@ -822,6 +924,10 @@ function renderChangesArea(): void {
     loading: state.busy === '读取 diff…',
     renderAllRows: showAllRows('workdir'),
     blameHtml,
+    selectedLines: state.selectedDiffLines,
+    imagePreview: state.imagePreview,
+    imageMode: state.imageMode,
+    imageSlider: state.imageSlider,
   });
 
   if (!state.changes.length && !state.amend) {
@@ -902,6 +1008,10 @@ function renderFullDiffOnly(): void {
     loading: state.busy === '读取 diff…',
     renderAllRows: showAllRows(isWorktree ? 'workdir' : 'commit'),
     blameHtml,
+    selectedLines: isWorktree ? state.selectedDiffLines : undefined,
+    imagePreview: state.imagePreview,
+    imageMode: state.imageMode,
+    imageSlider: state.imageSlider,
   });
 }
 
@@ -983,6 +1093,7 @@ function refreshLogRowsOnly(): void {
     viewportHeight: list.clientHeight || 600,
     hasMore: filter.hasMore,
     loadingMore: filter.loadingMore,
+    selectedHashes: state.selectedHashes,
   });
 }
 
@@ -1128,16 +1239,25 @@ async function selectRepo(path: string): Promise<void> {
   state.diff = null;
   state.fileFilter = null;
   state.filterQuery = '';
+  state.pickaxeQuery = '';
+  state.pickaxeRegex = false;
   state.authorFilter = '';
   state.timeFilter = 'all';
   state.branchAll = false;
+  state.selectedHashes = new Set();
+  state.compare = null;
   state.changes = [];
   state.selectedChangeKey = '';
   state.changeDiff = null;
+  state.selectedDiffLines = new Set();
+  state.lastLineSelect = null;
+  state.imagePreview = null;
   state.expanded = {};
   state.renderAll = {};
   state.merge = null;
   state.branchModal = null;
+  state.reflog = null;
+  state.repoModal = null;
   state.rebase = null;
   state.rebaseState = null;
   state.worktree = null;
@@ -1180,6 +1300,8 @@ async function loadLog(): Promise<void> {
       branch: !state.branchAll && repo.branch ? repo.branch : undefined,
       all: state.branchAll,
       filterPath: state.fileFilter ?? undefined,
+      pickaxe: state.pickaxeQuery.trim() || undefined,
+      pickaxeRegex: state.pickaxeRegex || undefined,
     });
     if (token !== repoToken) return;
     state.commits = result.commits;
@@ -1213,6 +1335,8 @@ async function loadMoreLog(): Promise<void> {
       all: state.branchAll,
       filterPath: state.fileFilter ?? undefined,
       cursor: state.logNextCursor,
+      pickaxe: state.pickaxeQuery.trim() || undefined,
+      pickaxeRegex: state.pickaxeRegex || undefined,
     });
     if (token !== repoToken) return;
     const seen = new Set(state.commits.map((c) => c.hash));
@@ -1263,28 +1387,41 @@ async function loadCommitFiles(): Promise<void> {
   }
 }
 
+const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/i;
+
 async function openCommitDiff(file: FileEntry): Promise<void> {
   const repo = selectedRepo();
   const commit = currentCommit();
-  if (!repo || !commit) return;
+  const compare = state.compare;
+  if (!repo || (!commit && !compare)) return;
   const token = repoToken;
   const request = ++diffRequest.value;
   state.selectedFile = file;
   state.blame = null;
   state.diff = null;
+  state.imagePreview = null;
   state.busy = '读取 diff…';
   if (state.tab === 'log') renderDetailsArea();
   if (state.fullDiff) renderFullDiffOnly();
   try {
-    const result = await api.diffCommit(
-      repo.path,
-      commit.hash,
-      file.path,
-      state.ignoreWhitespace,
-      state.expanded[diffKey('commit', changeKey(file))] ? 500 : 3,
-    );
+    const contextLines = state.expanded[diffKey('commit', changeKey(file))] ? 500 : 3;
+    const result = compare
+      ? await api.diffRange(repo.path, compare.base.hash, compare.head.hash, file.path, state.ignoreWhitespace, contextLines)
+      : await api.diffCommit(repo.path, commit!.hash, file.path, state.ignoreWhitespace, contextLines);
     if (token !== repoToken || request !== diffRequest.value) return;
     state.diff = await api.fullDiff(result.diff);
+    if ((state.diff.binary || IMAGE_EXT_RE.test(file.path)) && IMAGE_EXT_RE.test(file.path)) {
+      const img = await api
+        .diffImage(
+          repo.path,
+          file.path,
+          compare ? { base: compare.base.hash, head: compare.head.hash } : { hash: commit!.hash },
+        )
+        .catch(() => null);
+      if (token === repoToken && request === diffRequest.value) {
+        state.imagePreview = img;
+      }
+    }
   } catch (error) {
     report(error);
     state.diff = null;
@@ -1328,6 +1465,9 @@ async function loadChangeDiff(file: FileEntry): Promise<void> {
   const request = ++diffRequest.value;
   state.blame = null;
   state.changeDiff = null;
+  state.selectedDiffLines = new Set();
+  state.lastLineSelect = null;
+  state.imagePreview = null;
   state.busy = '读取 diff…';
   if (state.tab === 'changes') renderChangesArea();
   if (state.fullDiff) renderFullDiffOnly();
@@ -1342,6 +1482,17 @@ async function loadChangeDiff(file: FileEntry): Promise<void> {
     );
     if (token !== repoToken || request !== diffRequest.value) return;
     state.changeDiff = await api.fullDiff(result.diff);
+    if ((state.changeDiff.binary || IMAGE_EXT_RE.test(file.path)) && IMAGE_EXT_RE.test(file.path)) {
+      const img = await api
+        .diffImage(repo.path, file.path, {
+          staged: file.group === 'staged',
+          untracked: file.untracked === true,
+        })
+        .catch(() => null);
+      if (token === repoToken && request === diffRequest.value) {
+        state.imagePreview = img;
+      }
+    }
   } catch (error) {
     report(error);
     state.changeDiff = null;
@@ -1368,6 +1519,7 @@ async function refreshStatus(paths?: string[]): Promise<void> {
     for (const repo of result.repos) updateRepo(repo);
     state.lastRefresh = Date.now();
     renderSidebarOnly();
+    renderTopBarState();
     renderViewBar();
   } catch (error) {
     report(error);
@@ -1677,22 +1829,470 @@ async function runBranchPull(rebase = false): Promise<void> {
   }
 }
 
-async function openBranchModal(): Promise<void> {
+async function runBranchPush(includeTags = false): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo || state.remoteBusy) return;
+  state.remoteBusy = 'push';
+  if (state.branchModal) state.branchModal.busy = true;
+  renderTopBarState();
+  renderModal();
+  try {
+    await api.branchPush(repo.path, includeTags);
+    toast(includeTags ? `已推送分支与标签 · ${repo.name}` : `Push 完成 · ${repo.name}`, 'success');
+    await refreshStatus([repo.path]);
+    if (state.branchModal) {
+      const [refs, remotes] = await Promise.all([api.logRefs(repo.path), api.remoteList(repo.path)]);
+      state.branchModal.refs = refs.refs;
+      state.branchModal.remotes = remotes.remotes;
+    }
+    await loadLog();
+    render();
+  } catch (error) {
+    report(error);
+  } finally {
+    state.remoteBusy = null;
+    if (state.branchModal) state.branchModal.busy = false;
+    renderTopBarState();
+    renderModal();
+  }
+}
+
+async function openBranchModal(tab: BranchModalTab = 'branches'): Promise<void> {
   const repo = selectedRepo();
   if (!repo) return;
   closePopover();
-  state.branchModal = { refs: [], busy: true, filter: '' };
+  state.branchModal = { tab, refs: [], remotes: [], busy: true, filter: '', editingRemote: null };
   state.modal = { kind: 'branch' };
   renderModal();
   try {
-    const res = await api.logRefs(repo.path);
+    const [refsRes, remotesRes] = await Promise.all([
+      api.logRefs(repo.path),
+      api.remoteList(repo.path).catch(() => ({ remotes: [] as RemoteInfo[] })),
+    ]);
     if (!state.branchModal) return;
-    state.branchModal.refs = res.refs;
+    state.branchModal.refs = refsRes.refs;
+    state.branchModal.remotes = remotesRes.remotes;
     state.branchModal.busy = false;
     renderModal();
   } catch (error) {
     closeModal();
     report(error);
+  }
+}
+
+async function createTagFromModal(): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo || !state.branchModal) return;
+  const nameEl = document.getElementById('tagNewName') as HTMLInputElement | null;
+  const targetEl = document.getElementById('tagNewTarget') as HTMLInputElement | null;
+  const msgEl = document.getElementById('tagNewMsg') as HTMLInputElement | null;
+  const name = nameEl?.value.trim() ?? '';
+  if (!name) {
+    toast('请输入标签名', 'error');
+    nameEl?.focus();
+    return;
+  }
+  const target = targetEl?.value.trim() || 'HEAD';
+  const msg = msgEl?.value.trim() ?? '';
+  state.branchModal.busy = true;
+  renderModal();
+  try {
+    await api.tagCreate(repo.path, name, target, msg);
+    toast(`已创建标签 ${name}`, 'success');
+    const refs = await api.logRefs(repo.path);
+    if (state.branchModal) {
+      state.branchModal.refs = refs.refs;
+      state.branchModal.busy = false;
+    }
+    await refreshAfterWrite(true);
+    renderModal();
+  } catch (error) {
+    if (state.branchModal) state.branchModal.busy = false;
+    renderModal();
+    report(error);
+  }
+}
+
+async function deleteTagTarget(name: string): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo) return;
+  const ok = await askConfirm('删除标签', `确定删除本地标签 ${name}？`, true);
+  if (!ok) {
+    await openBranchModal('tags');
+    return;
+  }
+  try {
+    await api.tagDelete(repo.path, name, false);
+    toast(`已删除标签 ${name}`, 'success');
+    await openBranchModal('tags');
+    await refreshAfterWrite(true);
+  } catch (error) {
+    report(error);
+    await openBranchModal('tags');
+  }
+}
+
+async function pushTagTarget(name: string): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo || !state.branchModal) return;
+  state.branchModal.busy = true;
+  renderModal();
+  try {
+    await api.tagPush(repo.path, name);
+    toast(`已推送标签 ${name} 到 origin`, 'success');
+  } catch (error) {
+    report(error);
+  } finally {
+    if (state.branchModal) state.branchModal.busy = false;
+    renderModal();
+  }
+}
+
+async function addRemoteFromModal(): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo || !state.branchModal) return;
+  const nameEl = document.getElementById('rmNewName') as HTMLInputElement | null;
+  const urlEl = document.getElementById('rmNewUrl') as HTMLInputElement | null;
+  const name = nameEl?.value.trim() ?? '';
+  const url = urlEl?.value.trim() ?? '';
+  if (!name || !url) {
+    toast('请输入远端名称和 URL', 'error');
+    return;
+  }
+  state.branchModal.busy = true;
+  renderModal();
+  try {
+    await api.remoteAdd(repo.path, name, url);
+    toast(`已添加远端 ${name}`, 'success');
+    const res = await api.remoteList(repo.path);
+    if (state.branchModal) {
+      state.branchModal.remotes = res.remotes;
+      state.branchModal.busy = false;
+    }
+    renderModal();
+  } catch (error) {
+    if (state.branchModal) state.branchModal.busy = false;
+    renderModal();
+    report(error);
+  }
+}
+
+async function saveRemoteUrl(name: string): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo || !state.branchModal) return;
+  const urlEl = document.getElementById('rmEditUrl') as HTMLInputElement | null;
+  const url = urlEl?.value.trim() ?? '';
+  if (!url) {
+    toast('URL 不能为空', 'error');
+    return;
+  }
+  state.branchModal.busy = true;
+  renderModal();
+  try {
+    await api.remoteSetUrl(repo.path, name, url);
+    toast(`已更新远端 ${name} 地址`, 'success');
+    const res = await api.remoteList(repo.path);
+    if (state.branchModal) {
+      state.branchModal.remotes = res.remotes;
+      state.branchModal.editingRemote = null;
+      state.branchModal.busy = false;
+    }
+    renderModal();
+  } catch (error) {
+    if (state.branchModal) state.branchModal.busy = false;
+    renderModal();
+    report(error);
+  }
+}
+
+async function removeRemoteTarget(name: string): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo) return;
+  const ok = await askConfirm('删除远端', `确定移除远端配置 ${name}？`, true);
+  if (!ok) {
+    await openBranchModal('remotes');
+    return;
+  }
+  try {
+    await api.remoteRemove(repo.path, name);
+    toast(`已移除远端 ${name}`, 'success');
+    await openBranchModal('remotes');
+  } catch (error) {
+    report(error);
+    await openBranchModal('remotes');
+  }
+}
+
+// --- settings, reflog, clone/init modals ----------------------------------
+
+function openSettingsModal(): void {
+  if (!state.host) return;
+  closePopover();
+  state.modal = { kind: 'settings', saving: false };
+  renderModal();
+}
+
+async function saveSettingsFromModal(): Promise<void> {
+  if (!state.host) return;
+  const prevRoot = state.host.root;
+  const root = (document.getElementById('setRoot') as HTMLInputElement | null)?.value.trim() || prevRoot;
+  const depthRaw = Number((document.getElementById('setDepth') as HTMLInputElement | null)?.value ?? state.host.scanDepth);
+  const scanDepth = Math.max(1, Math.min(8, Number.isFinite(depthRaw) ? depthRaw : state.host.scanDepth));
+  const excludeGlobs = ((document.getElementById('setGlobs') as HTMLInputElement | null)?.value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const protectedBranches = ((document.getElementById('setProtected') as HTMLInputElement | null)?.value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const theme = ((document.getElementById('setTheme') as HTMLSelectElement | null)?.value ?? 'light') as 'light' | 'dark';
+  const diffMode = ((document.getElementById('setDiffMode') as HTMLSelectElement | null)?.value ?? 'split') as
+    | 'split'
+    | 'unified';
+  const editorCmd = (document.getElementById('setEditorCmd') as HTMLInputElement | null)?.value.trim() ?? '';
+  const editorArgs = ((document.getElementById('setEditorArgs') as HTMLInputElement | null)?.value ?? '')
+    .split(/\s+/)
+    .filter(Boolean);
+  const termShell = (document.getElementById('setTermShell') as HTMLInputElement | null)?.value.trim() ?? '';
+  const termArgs = ((document.getElementById('setTermArgs') as HTMLInputElement | null)?.value ?? '')
+    .split(/\s+/)
+    .filter(Boolean);
+  const confirmDangerous = Boolean((document.getElementById('setConfirmDangerous') as HTMLInputElement | null)?.checked);
+
+  state.modal = { kind: 'settings', saving: true };
+  renderModal();
+  try {
+    const res = await api.saveSettings({
+      root,
+      scanDepth,
+      excludeGlobs,
+      diffMode,
+      editor: { command: editorCmd, args: editorArgs },
+      terminal: { shell: termShell, args: termArgs },
+      protectedBranches,
+      confirmDangerous,
+    });
+    if (res.state) {
+      state.host = res.state;
+    } else if (state.host) {
+      state.host = {
+        ...state.host,
+        root,
+        scanDepth,
+        excludeGlobs,
+        diffMode,
+        editor: { command: editorCmd, args: editorArgs },
+        terminal: { shell: termShell, args: termArgs },
+        protectedBranches,
+        confirmDangerous,
+      };
+    }
+    state.diffMode = diffMode;
+    applyTheme(theme);
+    closeModal();
+    toast('设置已保存', 'success');
+    if (root !== prevRoot) {
+      await rescan();
+    } else {
+      render();
+    }
+  } catch (error) {
+    state.modal = { kind: 'settings', saving: false };
+    renderModal();
+    report(error);
+  }
+}
+
+async function openReflogModal(): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo) return;
+  closePopover();
+  state.reflog = { entries: [], loading: true, busy: false };
+  state.modal = { kind: 'reflog' };
+  renderModal();
+  try {
+    const res = await api.reflog(repo.path, 100);
+    if (!state.reflog) return;
+    state.reflog = { entries: res.entries, loading: false, busy: false };
+    renderModal();
+  } catch (error) {
+    closeModal();
+    report(error);
+  }
+}
+
+async function resetFromReflog(hash: string, mode: 'soft' | 'mixed' | 'hard'): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo) return;
+  const warn =
+    mode === 'hard'
+      ? `确定将 HEAD、暂存区与工作区强制重置到 ${hash.slice(0, 7)}？（操作前会自动写入安全快照）`
+      : `确定执行 git reset --${mode} ${hash.slice(0, 7)}？`;
+  const ok = await askConfirm(`Reflog 恢复（--${mode}）`, warn, mode === 'hard');
+  if (!ok) {
+    await openReflogModal();
+    return;
+  }
+  try {
+    await api.resetRepo(repo.path, hash, mode);
+    toast(`已回退到 ${hash.slice(0, 7)}（--${mode}）`, 'success');
+    await refreshAfterWrite(true);
+  } catch (error) {
+    report(error);
+  }
+}
+
+function openRepoModal(tab: 'clone' | 'init' = 'clone'): void {
+  closePopover();
+  state.repoModal = { tab, busy: false };
+  state.modal = { kind: 'repo' };
+  renderModal();
+}
+
+async function runCloneFromModal(): Promise<void> {
+  if (!state.repoModal) return;
+  const url = (document.getElementById('cloneUrl') as HTMLInputElement | null)?.value.trim() ?? '';
+  const parentDir = (document.getElementById('cloneParentDir') as HTMLInputElement | null)?.value.trim() ?? '';
+  const folderName = (document.getElementById('cloneFolderName') as HTMLInputElement | null)?.value.trim() ?? '';
+  if (!url) {
+    toast('请输入要克隆的仓库 URL', 'error');
+    return;
+  }
+  state.repoModal.busy = true;
+  renderModal();
+  try {
+    const res = await api.repoClone(url, parentDir, folderName);
+    closeModal();
+    toast(`克隆成功：${basenameOf(res.path)}`, 'success');
+    await rescan();
+    if (state.repos.some((r) => r.path === res.path)) {
+      await selectRepo(res.path);
+    }
+  } catch (error) {
+    if (state.repoModal) state.repoModal.busy = false;
+    renderModal();
+    report(error);
+  }
+}
+
+async function runInitFromModal(): Promise<void> {
+  if (!state.repoModal) return;
+  const dir = (document.getElementById('initParentDir') as HTMLInputElement | null)?.value.trim() ?? '';
+  const name = (document.getElementById('initName') as HTMLInputElement | null)?.value.trim() ?? '';
+  const branch = (document.getElementById('initBranch') as HTMLInputElement | null)?.value.trim() || 'main';
+  if (!dir && !name) {
+    toast('请填写父目录或仓库名', 'error');
+    return;
+  }
+  state.repoModal.busy = true;
+  renderModal();
+  try {
+    const res = await api.repoInit(dir, name, branch);
+    closeModal();
+    toast(`已初始化仓库：${basenameOf(res.path)}`, 'success');
+    await rescan();
+    if (state.repos.some((r) => r.path === res.path)) {
+      await selectRepo(res.path);
+    }
+  } catch (error) {
+    if (state.repoModal) state.repoModal.busy = false;
+    renderModal();
+    report(error);
+  }
+}
+
+// --- multi-select commits, range compare & batch cherry-pick --------------
+
+async function enterCompareMode(a: Commit, b: Commit): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo) return;
+  // Order chronologically: older as base, newer as head
+  const [base, head] = a.committedAt <= b.committedAt ? [a, b] : [b, a];
+  state.compare = { base, head };
+  state.selectedFile = null;
+  state.diff = null;
+  state.imagePreview = null;
+  state.blame = null;
+  state.busy = '读取文件列表…';
+  renderDetailsArea();
+  try {
+    const files = await api.compareFiles(repo.path, base.hash, head.hash);
+    state.commitFiles = files;
+    state.selectedFile = files[0] ?? null;
+    state.busy = null;
+    renderDetailsArea();
+    if (state.selectedFile) await openCommitDiff(state.selectedFile);
+  } catch (error) {
+    state.busy = null;
+    report(error);
+    renderDetailsArea();
+  }
+}
+
+async function swapCompareMode(): Promise<void> {
+  if (!state.compare) return;
+  const { base, head } = state.compare;
+  state.compare = { base: head, head: base };
+  const repo = selectedRepo();
+  if (!repo) return;
+  state.busy = '读取文件列表…';
+  renderDetailsArea();
+  try {
+    const files = await api.compareFiles(repo.path, state.compare.base.hash, state.compare.head.hash);
+    state.commitFiles = files;
+    state.selectedFile = files[0] ?? null;
+    state.busy = null;
+    renderDetailsArea();
+    if (state.selectedFile) await openCommitDiff(state.selectedFile);
+  } catch (error) {
+    state.busy = null;
+    report(error);
+  }
+}
+
+function clearMultiSelect(): void {
+  state.selectedHashes.clear();
+  const wasCompare = state.compare !== null;
+  state.compare = null;
+  if (wasCompare) {
+    state.filesHash = '';
+    void loadCommitFiles().then(() => {
+      const first = state.commitFiles[0];
+      if (first) void openCommitDiff(first);
+      render();
+    });
+  } else {
+    renderLogArea();
+  }
+}
+
+async function runBatchCherryPick(): Promise<void> {
+  const repo = selectedRepo();
+  if (!repo || state.selectedHashes.size < 2) return;
+  // Apply oldest -> newest so commits replay cleanly
+  const picked = visibleCommitList()
+    .filter((c) => state.selectedHashes.has(c.hash))
+    .reverse();
+  if (!picked.length) return;
+  const ok = await askConfirm(
+    `批量 Cherry-pick（${picked.length} 个提交）`,
+    `将按时间从早到晚依次 cherry-pick 以下提交到 ${repo.branch ?? 'HEAD'}：\n` +
+      picked.map((c) => `• ${c.shortHash} ${c.subject}`).join('\n'),
+  );
+  if (!ok) return;
+  try {
+    await api.cherryPickMany(
+      repo.path,
+      picked.map((c) => c.hash),
+    );
+    toast(`已批量 Cherry-pick ${picked.length} 个提交`, 'success');
+    state.selectedHashes.clear();
+    state.compare = null;
+    await refreshAfterWrite(true);
+  } catch (error) {
+    report(error);
+    await refreshAfterWrite(true);
   }
 }
 
@@ -1867,7 +2467,92 @@ async function stageHunkAt(index: number): Promise<void> {
   const patch = buildHunkPatch(file, hunk);
   try {
     await api.stageHunk(repo.path, patch, file.group === 'staged');
+    state.selectedDiffLines.clear();
     toast(file.group === 'staged' ? '已撤销暂存该块' : '已暂存该代码块', 'success');
+    await refreshAfterWrite(false);
+  } catch (error) {
+    report(error);
+  }
+}
+
+async function discardHunkAt(index: number): Promise<void> {
+  const repo = selectedRepo();
+  const file = state.changes.find((item) => changeKey(item) === state.selectedChangeKey);
+  if (!repo || !file || !state.changeDiff) return;
+  const hunk = state.changeDiff.hunks[index];
+  if (!hunk) return;
+  const ok = await askConfirm('丢弃代码块', `确定丢弃 ${file.path} 中该代码块的未暂存更改？（会自动创建快照）`, true);
+  if (!ok) return;
+  const patch = buildHunkPatch(file, hunk);
+  try {
+    await api.discardHunk(repo.path, patch);
+    state.selectedDiffLines.clear();
+    toast('已丢弃该代码块更改', 'success');
+    await refreshAfterWrite(false);
+  } catch (error) {
+    report(error);
+  }
+}
+
+function toggleLineSelection(hunkIndex: number, rowIndex: number, shiftKey: boolean): void {
+  const diff = state.changeDiff;
+  if (!diff) return;
+  const hunk = diff.hunks[hunkIndex];
+  if (!hunk) return;
+
+  if (shiftKey && state.lastLineSelect && state.lastLineSelect.hunk === hunkIndex) {
+    const lo = Math.min(state.lastLineSelect.row, rowIndex);
+    const hi = Math.max(state.lastLineSelect.row, rowIndex);
+    for (let r = lo; r <= hi; r += 1) {
+      const row = hunk.rows[r];
+      if (row && (row.t === 'add' || row.t === 'del')) {
+        state.selectedDiffLines.add(lineSelectKey(hunkIndex, r));
+      }
+    }
+  } else {
+    const key = lineSelectKey(hunkIndex, rowIndex);
+    if (state.selectedDiffLines.has(key)) state.selectedDiffLines.delete(key);
+    else state.selectedDiffLines.add(key);
+    state.lastLineSelect = { hunk: hunkIndex, row: rowIndex };
+  }
+
+  if (state.fullDiff) renderFullDiffOnly();
+  else renderChangesArea();
+}
+
+async function stageSelectedLinesAt(hunkIndex: number): Promise<void> {
+  const repo = selectedRepo();
+  const file = state.changes.find((item) => changeKey(item) === state.selectedChangeKey);
+  if (!repo || !file || !state.changeDiff) return;
+  const hunk = state.changeDiff.hunks[hunkIndex];
+  if (!hunk) return;
+  const isStaged = file.group === 'staged';
+  const patch = buildLinesPatch(file, hunk, hunkIndex, state.selectedDiffLines, isStaged ? 'unstage' : 'stage');
+  if (!patch) return;
+  try {
+    await api.stageHunk(repo.path, patch, isStaged);
+    state.selectedDiffLines.clear();
+    toast(isStaged ? '已撤销暂存选中行' : '已暂存选中行', 'success');
+    await refreshAfterWrite(false);
+  } catch (error) {
+    report(error);
+  }
+}
+
+async function discardSelectedLinesAt(hunkIndex: number): Promise<void> {
+  const repo = selectedRepo();
+  const file = state.changes.find((item) => changeKey(item) === state.selectedChangeKey);
+  if (!repo || !file || !state.changeDiff) return;
+  const hunk = state.changeDiff.hunks[hunkIndex];
+  if (!hunk) return;
+  const ok = await askConfirm('丢弃选中行', `确定丢弃 ${file.path} 中选中的代码行？（会自动创建快照）`, true);
+  if (!ok) return;
+  const patch = buildLinesPatch(file, hunk, hunkIndex, state.selectedDiffLines, 'discard');
+  if (!patch) return;
+  try {
+    await api.discardHunk(repo.path, patch);
+    state.selectedDiffLines.clear();
+    toast('已丢弃选中的代码行', 'success');
     await refreshAfterWrite(false);
   } catch (error) {
     report(error);
@@ -1951,7 +2636,18 @@ async function openMerge(filePath: string): Promise<void> {
   try {
     const mergeState = await api.mergeState(repo.path, filePath);
     if (mergeState.binary) {
-      toast('二进制冲突需要在外部工具中解决', 'error');
+      state.merge = {
+        file: filePath,
+        state: mergeState,
+        segments: [],
+        choices: [],
+        active: -1,
+        editMode: false,
+        customText: null,
+        syncScroll: true,
+      };
+      state.modal = { kind: 'merge' };
+      renderModal();
       return;
     }
     const segments = parseMergeLines(mergeState.lines);
@@ -1969,11 +2665,60 @@ async function openMerge(filePath: string): Promise<void> {
       active: total ? 0 : -1,
       editMode: false,
       customText: null,
+      syncScroll: true,
     };
     state.modal = { kind: 'merge' };
     renderModal();
   } catch (error) {
     report(error);
+  }
+}
+
+function acceptAllMerge(side: 'ours' | 'theirs'): void {
+  const merge = state.merge;
+  if (!merge) return;
+  merge.segments.forEach((segment, index) => {
+    if (segment.kind === 'block') merge.choices[index] = side;
+  });
+  merge.customText = null;
+  renderModal();
+  toast(side === 'ours' ? '已全部采用左边 Yours' : '已全部采用右边 Theirs', 'success');
+}
+
+async function resolveBinaryMergeSide(side: 'ours' | 'theirs'): Promise<void> {
+  const repo = selectedRepo();
+  const merge = state.merge;
+  if (!repo || !merge) return;
+  try {
+    await api.mergeResolveSide(repo.path, merge.file, side);
+    toast(`已保留 ${side === 'ours' ? 'Yours' : 'Theirs'} 并暂存：${merge.file}`, 'success');
+    closeModal();
+    await refreshAfterWrite(false);
+  } catch (error) {
+    report(error);
+  }
+}
+
+function bindMergeSyncScroll(container: HTMLElement): void {
+  const panes = Array.from(container.querySelectorAll<HTMLElement>('[data-merge-scroll]'));
+  if (panes.length < 2) return;
+  let syncing = false;
+  for (const pane of panes) {
+    pane.addEventListener('scroll', () => {
+      if (syncing || !state.merge?.syncScroll) return;
+      const max = pane.scrollHeight - pane.clientHeight;
+      if (max <= 0) return;
+      const ratio = pane.scrollTop / max;
+      syncing = true;
+      for (const other of panes) {
+        if (other === pane) continue;
+        const oMax = other.scrollHeight - other.clientHeight;
+        if (oMax > 0) other.scrollTop = Math.round(ratio * oMax);
+      }
+      window.requestAnimationFrame(() => {
+        syncing = false;
+      });
+    });
   }
 }
 
@@ -2554,6 +3299,17 @@ function openFilterPopover(kind: string, anchor: HTMLElement): void {
       310,
       'left',
     );
+  } else if (kind === 'pickaxe') {
+    showPopover(
+      anchor,
+      'pop-pickaxe',
+      renderPickaxePopover(repo, state.pickaxeQuery, state.pickaxeRegex),
+      310,
+      'left',
+    );
+    window.setTimeout(() => {
+      (document.getElementById('pickaxeInput') as HTMLInputElement | null)?.focus();
+    }, 0);
   } else if (kind === 'history') {
     showPopover(anchor, 'pop-history', renderHistoryPopover(messageHistory()), 320, 'right');
   } else if (kind === 'skills') {
@@ -2561,7 +3317,201 @@ function openFilterPopover(kind: string, anchor: HTMLElement): void {
   }
 }
 
+function openCommitContextMenu(commit: Commit, x: number, y: number): void {
+  const repo = selectedRepo();
+  if (!repo) return;
+  const headCommit = state.commits[0] ?? null;
+  const canCompareHead = Boolean(headCommit && headCommit.hash !== commit.hash);
+  const items: ContextMenuItem[] = [
+    { id: 'copy-hash', label: `复制完整哈希 (${commit.shortHash})`, icon: 'copy' },
+    { id: 'copy-subject', label: '复制提交信息', icon: 'copy' },
+    { id: 'd1', divider: true },
+    { id: 'new-branch', label: '从此处新建分支…', icon: 'branch' },
+    { id: 'new-tag', label: '从此处新建标签…', icon: 'tag' },
+    ...(canCompareHead ? [{ id: 'compare-head', label: '与 HEAD 对比差异', icon: 'split' }] : []),
+    { id: 'd2', divider: true },
+    { id: 'cherry', label: 'Cherry-pick 到当前分支', icon: 'check' },
+    { id: 'revert', label: 'Revert 回滚此提交', icon: 'undo' },
+    { id: 'rebase', label: 'Rebase -i（以此提交为基点）…', icon: 'branch' },
+    { id: 'patch', label: '导出 Patch 到 Shelf', icon: 'layers' },
+    { id: 'd3', divider: true },
+    { id: 'reset-soft', label: 'Reset --soft 到此提交', icon: 'undo' },
+    { id: 'reset-mixed', label: 'Reset --mixed 到此提交', icon: 'undo' },
+    { id: 'reset-hard', label: 'Reset --hard 到此提交（危险）', icon: 'undo', danger: true },
+  ];
+  mountContextMenu(items, x, y, (id) => {
+    void (async () => {
+      if (id === 'copy-hash') {
+        await navigator.clipboard.writeText(commit.hash).catch(() => undefined);
+        toast(`已复制 ${commit.shortHash}`, 'success');
+      } else if (id === 'copy-subject') {
+        await navigator.clipboard.writeText(commit.subject).catch(() => undefined);
+        toast('已复制提交信息', 'success');
+      } else if (id === 'new-branch') {
+        await openBranchModal('branches');
+        const startEl = document.getElementById('bmNewStart') as HTMLInputElement | null;
+        if (startEl) startEl.value = commit.shortHash;
+        (document.getElementById('bmNewName') as HTMLInputElement | null)?.focus();
+      } else if (id === 'new-tag') {
+        await openBranchModal('tags');
+        const targetEl = document.getElementById('tagNewTarget') as HTMLInputElement | null;
+        if (targetEl) targetEl.value = commit.shortHash;
+        (document.getElementById('tagNewName') as HTMLInputElement | null)?.focus();
+      } else if (id === 'compare-head' && headCommit) {
+        state.selectedHashes = new Set([commit.hash, headCommit.hash]);
+        renderLogArea();
+        await enterCompareMode(commit, headCommit);
+      } else if (id === 'cherry') {
+        await handleDataAct('cherry');
+      } else if (id === 'revert') {
+        await handleDataAct('revert');
+      } else if (id === 'rebase') {
+        await openRebaseModal();
+      } else if (id === 'patch') {
+        await handleDataAct('patch');
+      } else if (id === 'reset-soft' || id === 'reset-mixed' || id === 'reset-hard') {
+        await runCommandAction(id);
+      }
+    })();
+  });
+}
+
+function openChangeFileContextMenu(file: FileEntry, x: number, y: number): void {
+  const repo = selectedRepo();
+  if (!repo) return;
+  const isStaged = file.group === 'staged';
+  const cleanPattern = file.path.replace(/\/+$/, '');
+  const items: ContextMenuItem[] = [
+    { id: 'toggle-stage', label: isStaged ? '取消暂存' : '暂存此文件', icon: 'check' },
+    { id: 'open-editor', label: '在外部编辑器打开', icon: 'edit' },
+    { id: 'reveal', label: '在访达 / 资源管理器中显示', icon: 'folder' },
+    { id: 'copy-path', label: '复制相对路径', icon: 'copy' },
+    ...(file.untracked ? [] : [{ id: 'history', label: '查看文件提交历史', icon: 'history' }]),
+    { id: 'd1', divider: true },
+    { id: 'gitignore', label: `添加到 .gitignore (${basenameOf(cleanPattern)})`, icon: 'eye-off' },
+    { id: 'discard', label: '放弃更改（自动快照）', icon: 'undo', danger: true },
+  ];
+  mountContextMenu(items, x, y, (id) => {
+    void (async () => {
+      if (id === 'toggle-stage') {
+        await stageFilesBatch([file.path], !isStaged);
+      } else if (id === 'open-editor') {
+        await api.openFile(`${repo.path}/${file.path}`, 0).catch(report);
+      } else if (id === 'reveal') {
+        await api.revealPath(`${repo.path}/${file.path}`).catch(report);
+      } else if (id === 'copy-path') {
+        await navigator.clipboard.writeText(file.path).catch(() => undefined);
+        toast(`已复制 ${file.path}`, 'success');
+      } else if (id === 'history') {
+        state.fileFilter = file.path;
+        state.commitIndex = 0;
+        await switchTab('log');
+        await loadLog();
+        const first = state.commitFiles[0];
+        if (first) await openCommitDiff(first);
+        render();
+      } else if (id === 'gitignore') {
+        try {
+          await api.addGitignore(repo.path, file.path);
+          toast(`已将 ${file.path} 写入 .gitignore`, 'success');
+          await refreshAfterWrite(false);
+        } catch (error) {
+          report(error);
+        }
+      } else if (id === 'discard') {
+        state.modal = { kind: 'discard', data: { targets: [file] } };
+        renderModal();
+      }
+    })();
+  });
+}
+
+function openRepoContextMenu(repo: Repo, x: number, y: number): void {
+  const items: ContextMenuItem[] = [
+    { id: 'reveal', label: '在访达 / 资源管理器中打开', icon: 'folder' },
+    { id: 'terminal', label: '在内置终端中打开', icon: 'terminal' },
+    { id: 'copy-path', label: '复制仓库路径', icon: 'copy' },
+    { id: 'd1', divider: true },
+    { id: 'fetch', label: 'Fetch 全部远端', icon: 'refresh' },
+    { id: 'pull', label: 'Pull 当前分支', icon: 'arrow-down' },
+    { id: 'push', label: 'Push 当前分支', icon: 'arrow-up' },
+    { id: 'd2', divider: true },
+    { id: 'exclude', label: '从仓库列表中排除', icon: 'eye-off', danger: true },
+  ];
+  mountContextMenu(items, x, y, (id) => {
+    void (async () => {
+      if (id === 'reveal') {
+        await api.revealPath(repo.path).catch(report);
+      } else if (id === 'copy-path') {
+        await navigator.clipboard.writeText(repo.path).catch(() => undefined);
+        toast(`已复制 ${repo.path}`, 'success');
+      } else if (id === 'exclude') {
+        if (!state.excluded.includes(repo.path)) state.excluded.push(repo.path);
+        if (state.host) void api.setExclusions(state.host.excludeGlobs, state.excluded).catch(report);
+        if (state.selectedPath === repo.path) {
+          const next = visibleRepos(state.repos, state.excluded, state.query)[0];
+          if (next) await selectRepo(next.path);
+          else {
+            state.selectedPath = '';
+            render();
+          }
+        } else {
+          renderSidebarOnly();
+        }
+      } else {
+        if (state.selectedPath !== repo.path) await selectRepo(repo.path);
+        if (id === 'terminal') {
+          state.termTab = 'term';
+          state.termOpen = true;
+          renderTerminalOnly(true);
+          await startShellSession();
+        } else if (id === 'fetch') await runBranchFetch();
+        else if (id === 'pull') await runBranchPull(false);
+        else if (id === 'push') await runBranchPush(false);
+      }
+    })();
+  });
+}
+
 function bindEvents(): void {
+  // Unified right-click context menus (commits, changes files, sidebar repos)
+  document.addEventListener('contextmenu', (event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+
+    const commitRow = target.closest<HTMLElement>('.commit-row[data-commit]');
+    if (commitRow) {
+      event.preventDefault();
+      const idx = Number(commitRow.dataset.commit ?? -1);
+      const commits = visibleCommitList();
+      const commit = commits[idx];
+      if (!commit) return;
+      if (state.commitIndex !== idx) {
+        state.commitIndex = idx;
+        state.filesHash = '';
+        renderLogArea();
+        void loadCommitFiles();
+      }
+      openCommitContextMenu(commit, event.clientX, event.clientY);
+      return;
+    }
+
+    const changeRow = target.closest<HTMLElement>('.tree-file[data-cfile]');
+    if (changeRow) {
+      event.preventDefault();
+      const key = changeRow.dataset.cfile ?? '';
+      const file = state.changes.find((f) => changeKey(f) === key);
+      if (file) openChangeFileContextMenu(file, event.clientX, event.clientY);
+      return;
+    }
+
+    const repoRow = target.closest<HTMLElement>('.repo-row[data-repo]');
+    if (repoRow?.dataset.repo) {
+      event.preventDefault();
+      const repo = state.repos.find((r) => r.path === repoRow.dataset.repo);
+      if (repo) openRepoContextMenu(repo, event.clientX, event.clientY);
+    }
+  });
   // Log scroll virtualization & infinite cursor pagination
   let logScrollRaf = 0;
   const commitList = $('#commitList');
@@ -2652,6 +3602,15 @@ function bindEvents(): void {
     if (rbMsg && state.rebase) {
       const idx = Number(rbMsg.dataset.rbMsg ?? -1);
       if (state.rebase.items[idx]) state.rebase.items[idx].message = rbMsg.value;
+      return;
+    }
+    if (target.id === 'imgDiffSlider') {
+      const pct = Number((target as HTMLInputElement).value);
+      state.imageSlider = Math.max(0, Math.min(100, pct));
+      const clip = document.querySelector<HTMLElement>('.img-slider-before-clip');
+      const div = document.querySelector<HTMLElement>('.img-slider-divider');
+      if (clip) clip.style.clipPath = `inset(0 ${100 - state.imageSlider}% 0 0)`;
+      if (div) div.style.left = `${state.imageSlider}%`;
     }
   });
 
@@ -2787,6 +3746,24 @@ function bindEvents(): void {
       autoResolveMerge();
       return;
     }
+    if (target.closest('#mergeAllOurs')) {
+      acceptAllMerge('ours');
+      return;
+    }
+    if (target.closest('#mergeAllTheirs')) {
+      acceptAllMerge('theirs');
+      return;
+    }
+    if (target.closest('#mergeSyncScroll') && state.merge) {
+      state.merge.syncScroll = !state.merge.syncScroll;
+      renderModal();
+      return;
+    }
+    const mergeSideBtn = target.closest<HTMLElement>('[data-merge-side]');
+    if (mergeSideBtn?.dataset.mergeSide) {
+      void resolveBinaryMergeSide(mergeSideBtn.dataset.mergeSide as 'ours' | 'theirs');
+      return;
+    }
     if (target.closest('#mergeToggleEdit')) {
       toggleMergeEditMode();
       return;
@@ -2806,17 +3783,125 @@ function bindEvents(): void {
       return;
     }
 
-    // Branch modal
+    // Branch / Tags / Remotes modal
+    const bmTab = target.closest<HTMLElement>('[data-bm-tab]');
+    if (bmTab?.dataset.bmTab && state.branchModal) {
+      state.branchModal.tab = bmTab.dataset.bmTab as BranchModalTab;
+      state.branchModal.editingRemote = null;
+      renderModal();
+      return;
+    }
     const bmOp = target.closest<HTMLElement>('[data-bm-op]');
     if (bmOp) {
       const op = bmOp.dataset.bmOp;
       if (op === 'fetch') void runBranchFetch();
       else if (op === 'pull') void runBranchPull(false);
       else if (op === 'pull-rebase') void runBranchPull(true);
+      else if (op === 'push') void runBranchPush(false);
       return;
     }
     if (target.closest('#bmCreateBtn')) {
       void createBranchFromModal();
+      return;
+    }
+    if (target.closest('#tagCreateBtn')) {
+      void createTagFromModal();
+      return;
+    }
+    const tagPush = target.closest<HTMLElement>('[data-tag-push]');
+    if (tagPush?.dataset.tagPush) {
+      void pushTagTarget(tagPush.dataset.tagPush);
+      return;
+    }
+    const tagDel = target.closest<HTMLElement>('[data-tag-delete]');
+    if (tagDel?.dataset.tagDelete) {
+      void deleteTagTarget(tagDel.dataset.tagDelete);
+      return;
+    }
+    if (target.closest('#rmAddBtn')) {
+      void addRemoteFromModal();
+      return;
+    }
+    const rmEdit = target.closest<HTMLElement>('[data-rm-edit]');
+    if (rmEdit?.dataset.rmEdit && state.branchModal) {
+      state.branchModal.editingRemote = rmEdit.dataset.rmEdit;
+      renderModal();
+      return;
+    }
+    if (target.closest('[data-rm-cancel]') && state.branchModal) {
+      state.branchModal.editingRemote = null;
+      renderModal();
+      return;
+    }
+    const rmSave = target.closest<HTMLElement>('[data-rm-save]');
+    if (rmSave?.dataset.rmSave) {
+      void saveRemoteUrl(rmSave.dataset.rmSave);
+      return;
+    }
+    const rmRemove = target.closest<HTMLElement>('[data-rm-remove]');
+    if (rmRemove?.dataset.rmRemove) {
+      void removeRemoteTarget(rmRemove.dataset.rmRemove);
+      return;
+    }
+
+    // Settings modal
+    if (target.closest('#saveSettingsBtn')) {
+      void saveSettingsFromModal();
+      return;
+    }
+
+    // Reflog modal
+    if (target.closest('#rfRefreshBtn')) {
+      void openReflogModal();
+      return;
+    }
+    const rfReset = target.closest<HTMLElement>('[data-rf-reset]');
+    if (rfReset?.dataset.rfReset && rfReset.dataset.rfMode) {
+      void resetFromReflog(rfReset.dataset.rfReset, rfReset.dataset.rfMode as 'soft' | 'mixed' | 'hard');
+      return;
+    }
+
+    // Clone / Init repo modal
+    const repoModalTab = target.closest<HTMLElement>('[data-repomodal-tab]');
+    if (repoModalTab?.dataset.repomodalTab && state.repoModal) {
+      state.repoModal.tab = repoModalTab.dataset.repomodalTab as 'clone' | 'init';
+      renderModal();
+      return;
+    }
+    if (target.closest('#doCloneBtn')) {
+      void runCloneFromModal();
+      return;
+    }
+    if (target.closest('#doInitBtn')) {
+      void runInitFromModal();
+      return;
+    }
+
+    // Pickaxe popover buttons
+    if (target.closest('#pickaxeApplyBtn')) {
+      const input = document.getElementById('pickaxeInput') as HTMLInputElement | null;
+      const reBox = document.getElementById('pickaxeRegex') as HTMLInputElement | null;
+      state.pickaxeQuery = input?.value.trim() ?? '';
+      state.pickaxeRegex = Boolean(reBox?.checked);
+      state.commitIndex = 0;
+      closePopover();
+      void loadLog().then(() => {
+        const first = state.commitFiles[0];
+        if (first) void openCommitDiff(first);
+        render();
+      });
+      return;
+    }
+    if (target.closest('#pickaxeClearBtn')) {
+      state.pickaxeQuery = '';
+      state.pickaxeRegex = false;
+      state.commitIndex = 0;
+      closePopover();
+      void loadLog().then(() => {
+        const first = state.commitFiles[0];
+        if (first) void openCommitDiff(first);
+        render();
+      });
       return;
     }
     const bmCo = target.closest<HTMLElement>('[data-bm-checkout]');
@@ -3034,14 +4119,63 @@ function bindEvents(): void {
       return;
     }
 
-    // Commit row selection
+    // Commit row selection (supports ⌘/Ctrl multi-select & Shift range select)
     const commitRow = target.closest<HTMLElement>('[data-commit]');
     if (commitRow) {
       const idx = Number(commitRow.dataset.commit ?? 0);
+      const commits = visibleCommitList();
+      const clicked = commits[idx];
+      if (!clicked) return;
+
+      if (event.metaKey || event.ctrlKey) {
+        if (!state.selectedHashes.size) {
+          const cur = commits[currentCommitIndex()];
+          if (cur) state.selectedHashes.add(cur.hash);
+        }
+        if (state.selectedHashes.has(clicked.hash)) {
+          if (state.selectedHashes.size > 1) state.selectedHashes.delete(clicked.hash);
+        } else {
+          state.selectedHashes.add(clicked.hash);
+        }
+        state.commitIndex = idx;
+        renderLogArea();
+        if (state.selectedHashes.size === 2) {
+          const pair = commits.filter((c) => state.selectedHashes.has(c.hash));
+          if (pair.length === 2) void enterCompareMode(pair[0], pair[1]);
+        } else {
+          state.compare = null;
+          renderDetailsArea();
+        }
+        return;
+      }
+
+      if (event.shiftKey) {
+        const from = currentCommitIndex();
+        const lo = Math.min(from, idx);
+        const hi = Math.max(from, idx);
+        state.selectedHashes.clear();
+        for (let i = lo; i <= hi; i += 1) {
+          if (commits[i]) state.selectedHashes.add(commits[i].hash);
+        }
+        state.commitIndex = idx;
+        renderLogArea();
+        if (state.selectedHashes.size === 2) {
+          const pair = commits.filter((c) => state.selectedHashes.has(c.hash));
+          if (pair.length === 2) void enterCompareMode(pair[0], pair[1]);
+        } else {
+          state.compare = null;
+          renderDetailsArea();
+        }
+        return;
+      }
+
+      state.selectedHashes.clear();
+      state.compare = null;
       state.commitIndex = idx;
       state.filesHash = '';
       state.selectedFile = null;
       state.diff = null;
+      state.imagePreview = null;
       state.blame = null;
       renderLogArea();
       void loadCommitFiles().then(() => {
@@ -3122,6 +4256,35 @@ function bindEvents(): void {
     const hunkBtn = target.closest<HTMLElement>('[data-stage-hunk]');
     if (hunkBtn) {
       void stageHunkAt(Number(hunkBtn.dataset.stageHunk ?? 0));
+      return;
+    }
+    const discardHunkBtn = target.closest<HTMLElement>('[data-discard-hunk]');
+    if (discardHunkBtn) {
+      void discardHunkAt(Number(discardHunkBtn.dataset.discardHunk ?? 0));
+      return;
+    }
+    const stageLinesBtn = target.closest<HTMLElement>('[data-stage-lines]');
+    if (stageLinesBtn) {
+      void stageSelectedLinesAt(Number(stageLinesBtn.dataset.stageLines ?? 0));
+      return;
+    }
+    const discardLinesBtn = target.closest<HTMLElement>('[data-discard-lines]');
+    if (discardLinesBtn) {
+      void discardSelectedLinesAt(Number(discardLinesBtn.dataset.discardLines ?? 0));
+      return;
+    }
+    const lineSelEl = target.closest<HTMLElement>('[data-line-select]');
+    if (lineSelEl?.dataset.lineSelect) {
+      const [hStr, rStr] = lineSelEl.dataset.lineSelect.split(':');
+      toggleLineSelection(Number(hStr), Number(rStr), event.shiftKey);
+      return;
+    }
+    const imgModeBtn = target.closest<HTMLElement>('[data-img-mode]');
+    if (imgModeBtn?.dataset.imgMode) {
+      state.imageMode = imgModeBtn.dataset.imgMode as 'side' | 'slider';
+      if (state.fullDiff) renderFullDiffOnly();
+      else if (state.tab === 'changes') renderChangesArea();
+      else renderDetailsArea();
       return;
     }
     if (target.closest('[data-fold]')) {
@@ -3365,6 +4528,18 @@ function bindEvents(): void {
       return;
     }
 
+    if (event.key === 'Enter' && target?.id === 'tagNewName') {
+      event.preventDefault();
+      void createTagFromModal();
+      return;
+    }
+
+    if (event.key === 'Enter' && target?.id === 'pickaxeInput') {
+      event.preventDefault();
+      document.getElementById('pickaxeApplyBtn')?.click();
+      return;
+    }
+
     if (state.fullDiff && !inInput && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
       event.preventDefault();
       void stepDiffFile(event.key === 'ArrowLeft' ? -1 : 1);
@@ -3424,11 +4599,46 @@ async function handleNamedAction(action: string, el: HTMLElement): Promise<void>
       state.timeFilter = 'all';
       state.fileFilter = null;
       state.filterQuery = '';
+      state.pickaxeQuery = '';
+      state.pickaxeRegex = false;
       state.commitIndex = 0;
       await loadLog();
       const first = state.commitFiles[0];
       if (first) await openCommitDiff(first);
       render();
+      return;
+    }
+    case 'branch-push': {
+      await runBranchPush(false);
+      return;
+    }
+    case 'open-settings': {
+      openSettingsModal();
+      return;
+    }
+    case 'open-reflog': {
+      await openReflogModal();
+      return;
+    }
+    case 'open-new-repo': {
+      openRepoModal('clone');
+      return;
+    }
+    case 'compare-selected': {
+      const commits = visibleCommitList().filter((c) => state.selectedHashes.has(c.hash));
+      if (commits.length === 2) await enterCompareMode(commits[0], commits[1]);
+      return;
+    }
+    case 'swap-compare': {
+      await swapCompareMode();
+      return;
+    }
+    case 'batch-cherry-pick': {
+      await runBatchCherryPick();
+      return;
+    }
+    case 'clear-multi-select': {
+      clearMultiSelect();
       return;
     }
     case 'toggle-workspace': {
@@ -3554,8 +4764,16 @@ async function runCommandAction(cmd: string): Promise<void> {
     await runBranchFetch();
   } else if (cmd === 'pull') {
     await runBranchPull(false);
+  } else if (cmd === 'push') {
+    await runBranchPush(false);
   } else if (cmd === 'pull-rebase') {
     await runBranchPull(true);
+  } else if (cmd === 'reflog') {
+    await openReflogModal();
+  } else if (cmd === 'new-repo') {
+    openRepoModal('clone');
+  } else if (cmd === 'settings') {
+    openSettingsModal();
   } else if (cmd === 'worktree') {
     await openWorktreeModal();
   } else if (cmd === 'rebase') {
@@ -3598,11 +4816,22 @@ async function handleDataAct(act: string): Promise<void> {
   const commit = currentCommit();
 
   switch (act) {
-    case 'pickroot': {
+    case 'pickroot':
+    case 'picksettingsroot':
+    case 'pickclonedir':
+    case 'pickinitdir': {
       try {
         const picked = await api.pickRoot();
         if (picked) {
-          const input = document.getElementById('rootInput') as HTMLInputElement | null;
+          const targetId =
+            act === 'picksettingsroot'
+              ? 'setRoot'
+              : act === 'pickclonedir'
+                ? 'cloneParentDir'
+                : act === 'pickinitdir'
+                  ? 'initParentDir'
+                  : 'rootInput';
+          const input = document.getElementById(targetId) as HTMLInputElement | null;
           if (input) input.value = picked;
         }
       } catch (error) {

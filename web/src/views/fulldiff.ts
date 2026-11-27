@@ -1,4 +1,4 @@
-import type { Commit, DiffFile, FileEntry, Repo } from '../types';
+import type { Commit, DiffFile, FileEntry, ImagePreview, Repo } from '../types';
 import { basenameOf, dirnameOf, icon } from './icons';
 import { renderDiffBodyOnly } from './diff';
 import { esc } from './util';
@@ -18,6 +18,10 @@ export interface FullDiffOptions {
   loading: boolean;
   renderAllRows: boolean;
   blameHtml?: string | null;
+  selectedLines?: Set<string>;
+  imagePreview?: ImagePreview | null;
+  imageMode?: 'side' | 'slider';
+  imageSlider?: number;
 }
 
 export function renderFullDiffPage(opts: FullDiffOptions): string {
@@ -102,6 +106,10 @@ export function renderFullDiffPage(opts: FullDiffOptions): string {
         rightLabel: isWorktree ? (file?.group === 'staged' ? '暂存区 · staged' : '工作区 · 未暂存') : '修改后',
         emptyText: '没有可显示的文件 diff。',
         hideToolbar: true,
+        selectedLines: isWorktree ? opts.selectedLines : undefined,
+        imagePreview: opts.imagePreview,
+        imageMode: opts.imageMode,
+        imageSlider: opts.imageSlider,
       })}</div></div>`;
 
   return header + body;

@@ -212,31 +212,48 @@ window.nimi = {
     if (method === 'Shell.setExclusions') return JSON.stringify({ ok: true });
     if (method === 'Shell.pickRoot' || method === 'Shell.pickPatch') return '';
     if (method === 'Shell.openFile' || method === 'Shell.jsError' || method === 'Shell.setTheme') return { ok: true };
+    if (method === 'Shell.revealPath') return JSON.stringify({ ok: true });
+    if (method === 'Shell.saveSettings') return JSON.stringify({ ok: true, state: {
+      root: '/Users/zhimoe/code', scanDepth: 4,
+      excludeGlobs: ['node_modules', 'target', '.venv', 'vendor'],
+      excludeRepos: [], selectedRepoId: 'r0', diffMode: 'split',
+      editor: { command: '', args: [] }, terminal: { shell: '', args: [] },
+      protectedBranches: ['main', 'master'], confirmDangerous: true,
+    }});
     if (method === 'Shell.pollEvents') return '[]';
     if (method === 'Agent.config') return env(agentConfig);
     if (method === 'Repo.cached') return env(repos);
     if (method === 'Repo.scan') return env({ repos, scanned: 16, skipped: 2, ms: 4 });
     if (method === 'Repo.status') return env({ repos, ms: 84 });
     if (method === 'Repo.changes') return env({ files: changes, ms: 5 });
-    if (method === 'Repo.reset') return env({ ok: true });
+    if (method === 'Repo.reset' || method === 'Repo.addGitignore') return env({ ok: true });
+    if (method === 'Repo.clone' || method === 'Repo.init') return env({ ok: true, path: '/Users/zhimoe/code/new-repo' });
     if (method === 'Log.list') return env({ commits, hasMore: false, nextCursor: '', ms: 12 });
-    if (method === 'Log.files') return env(commitFiles);
+    if (method === 'Log.files' || method === 'Log.compareFiles') return env(commitFiles);
     if (method === 'Log.refs') return env({ refs });
-    if (method === 'Diff.commit' || method === 'Diff.workdir') {
+    if (method === 'Log.reflog') return env({ entries: [
+      { hash: HASHES[0].padEnd(40, '0'), shortHash: HASHES[0], selector: 'HEAD@{0}', action: 'commit: git: 仓库扫描改为并行分片', epochMs: now - 15 * 60_000 },
+      { hash: HASHES[1].padEnd(40, '0'), shortHash: HASHES[1], selector: 'HEAD@{1}', action: 'checkout: moving from feat/worktree to main', epochMs: now - 2 * hour },
+    ]});
+    if (method === 'Diff.commit' || method === 'Diff.workdir' || method === 'Diff.range') {
       const a = parseArg(arg);
       const diff = diffs[a.file] || diffScan;
       return env({ diff: { ...diff, path: a.file || diff.path } });
     }
+    if (method === 'Diff.image') return env({ supported: false, mime: '', beforeDataUrl: '', afterDataUrl: '', beforeBytes: 0, afterBytes: 0, tooLarge: false });
     if (method === 'Diff.chunk') return env({ index: 0, count: 1, chunk: '{}' });
-    if (method === 'Stage.hunk' || method === 'Stage.files' || method === 'Stage.discard') return env({ ok: true });
+    if (method === 'Stage.hunk' || method === 'Stage.files' || method === 'Stage.discard' || method === 'Stage.discardHunk') return env({ ok: true });
     if (method === 'Commit.create') return env({ hash: HASHES[0].padEnd(40, '0') });
     if (method === 'Commit.cherryPick' || method === 'Commit.revert' || method === 'Commit.pushForce') return env({ ok: true });
     if (method === 'Commit.patch') return env({ ok: true, file: '/tmp/0001.patch' });
     if (method === 'Merge.state') return env(mergeState);
-    if (method === 'Merge.resolve') return env({ ok: true });
-    if (method === 'Branch.fetch' || method === 'Branch.checkout' || method === 'Branch.create' || method === 'Branch.delete' || method === 'Branch.mergeAbort') {
+    if (method === 'Merge.resolve' || method === 'Merge.resolveSide') return env({ ok: true });
+    if (method === 'Branch.fetch' || method === 'Branch.push' || method === 'Branch.checkout' || method === 'Branch.create' || method === 'Branch.delete' || method === 'Branch.mergeAbort') {
       return env({ ok: true });
     }
+    if (method === 'Tag.create' || method === 'Tag.delete' || method === 'Tag.push') return env({ ok: true });
+    if (method === 'Remote.list') return env({ remotes: [{ name: 'origin', fetchUrl: 'https://github.com/zhimoe/knit.git', pushUrl: 'https://github.com/zhimoe/knit.git' }] });
+    if (method === 'Remote.add' || method === 'Remote.setUrl' || method === 'Remote.remove') return env({ ok: true });
     if (method === 'Branch.pull' || method === 'Branch.merge') return env({ ok: true, conflict: false, conflicts: [], output: 'Already up to date.' });
     if (method === 'Rebase.state') return env({ inProgress: false, headName: '', msgNum: 0, end: 0, onto: '', conflicts: [] });
     if (method === 'Rebase.plan') return env({ onto: HASHES[3].padEnd(40, '0'), commits: commits.slice(0, 3).map((c) => ({ hash: c.hash, shortHash: c.shortHash, subject: c.subject, author: c.author.name, action: 'pick' })) });

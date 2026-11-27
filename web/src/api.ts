@@ -22,10 +22,13 @@ import type {
   GitCommandEvent,
   GitRef,
   HostState,
+  ImagePreview,
   LogResult,
   MergeState,
   RebaseCommit,
   RebaseState,
+  ReflogEntry,
+  RemoteInfo,
   Repo,
   RepoChangedEvent,
   ScanResult,
@@ -126,6 +129,18 @@ export const api = {
 
   openFile: (path: string, line = 0) => guard('Shell.openFile', () => bridge().call('Shell.openFile', path, line)),
 
+  revealPath: (path: string) =>
+    guard('Shell.revealPath', async () => {
+      const raw = await bridge().call('Shell.revealPath', path);
+      return JSON.parse(String(raw)) as { ok: boolean; error?: string };
+    }),
+
+  saveSettings: (settings: Partial<HostState>) =>
+    guard('Shell.saveSettings', async () => {
+      const raw = await bridge().call('Shell.saveSettings', JSON.stringify(settings));
+      return JSON.parse(String(raw)) as { ok: boolean; state?: HostState; error?: string };
+    }),
+
   jsError: (message: string) => {
     // Never make a synchronous bridge call from inside a knitEvent eval:
     // deferring keeps the native call out of the eval's re-entrant path.
@@ -162,15 +177,42 @@ export const api = {
   log: (
     path: string,
     limit = 200,
-    opts: { branch?: string; all?: boolean; filterPath?: string; cursor?: string } = {},
+    opts: {
+      branch?: string;
+      all?: boolean;
+      filterPath?: string;
+      cursor?: string;
+      pickaxe?: string;
+      pickaxeRegex?: boolean;
+    } = {},
   ) => call<LogResult>('Log.list', { path, limit, ...opts }),
 
   logFiles: (path: string, hash: string) => call<FileEntry[]>('Log.files', { path, hash }),
 
   logRefs: (path: string) => call<{ refs: GitRef[] }>('Log.refs', { path }),
 
+  compareFiles: (path: string, base: string, head: string) =>
+    call<FileEntry[]>('Log.compareFiles', { path, base, head }),
+
+  reflog: (path: string, limit = 80) => call<{ entries: ReflogEntry[] }>('Log.reflog', { path, limit }),
+
   diffCommit: (path: string, hash: string, file: string, ignoreWhitespace = false, contextLines = 3) =>
     call<DiffResult>('Diff.commit', { path, hash, file, ignoreWhitespace, contextLines }),
+
+  diffRange: (
+    path: string,
+    base: string,
+    head: string,
+    file: string,
+    ignoreWhitespace = false,
+    contextLines = 3,
+  ) => call<DiffResult>('Diff.range', { path, base, head, file, ignoreWhitespace, contextLines }),
+
+  diffImage: (
+    path: string,
+    file: string,
+    opts: { hash?: string; staged?: boolean; untracked?: boolean; base?: string; head?: string } = {},
+  ) => call<ImagePreview>('Diff.image', { path, file, ...opts }),
 
   diffWorkdir: (
     path: string,
@@ -186,6 +228,9 @@ export const api = {
   stageHunk: (path: string, patch: string, reverse = false) =>
     call<{ ok: boolean }>('Stage.hunk', { path, patch, reverse }),
 
+  discardHunk: (path: string, patch: string) =>
+    call<{ ok: boolean }>('Stage.discardHunk', { path, patch }),
+
   stageFiles: (path: string, files: string[], staged: boolean) =>
     call<{ ok: boolean }>('Stage.files', { path, files, staged }),
 
@@ -196,6 +241,8 @@ export const api = {
 
   cherryPick: (path: string, hash: string) => call<{ ok: boolean }>('Commit.cherryPick', { path, hash }),
 
+  cherryPickMany: (path: string, hashes: string[]) => call<{ ok: boolean }>('Commit.cherryPick', { path, hashes }),
+
   revert: (path: string, hash: string) => call<{ ok: boolean }>('Commit.revert', { path, hash }),
 
   createPatch: (path: string, hash: string) => call<{ ok: boolean; file: string }>('Commit.patch', { path, hash }),
@@ -203,12 +250,24 @@ export const api = {
   resetRepo: (path: string, rev: string, mode: 'soft' | 'mixed' | 'hard') =>
     call<{ ok: boolean }>('Repo.reset', { path, rev, mode }),
 
+  repoClone: (url: string, parentDir = '', folderName = '') =>
+    call<{ ok: boolean; path: string }>('Repo.clone', { url, parentDir, folderName }),
+
+  repoInit: (dir: string, name = '', branch = 'main') =>
+    call<{ ok: boolean; path: string }>('Repo.init', { dir, name, branch }),
+
+  addGitignore: (path: string, pattern: string) =>
+    call<{ ok: boolean }>('Repo.addGitignore', { path, pattern }),
+
   pushForce: (path: string) => call<{ ok: boolean }>('Commit.pushForce', { path }),
 
   mergeState: (path: string, file: string) => call<MergeState>('Merge.state', { path, file }),
 
   mergeResolve: (path: string, file: string, resolved: string) =>
     call<{ ok: boolean }>('Merge.resolve', { path, file, resolved }),
+
+  mergeResolveSide: (path: string, file: string, side: 'ours' | 'theirs') =>
+    call<{ ok: boolean }>('Merge.resolveSide', { path, file, side }),
 
   shelfList: (path: string) => call<ShelfItem[]>('Shelf.list', { path }),
 
@@ -280,6 +339,27 @@ export const api = {
       path,
       rebase,
     }),
+
+  branchPush: (path: string, includeTags = false) =>
+    call<{ ok: boolean }>('Branch.push', { path, includeTags }),
+
+  tagCreate: (path: string, name: string, target = 'HEAD', message = '') =>
+    call<{ ok: boolean }>('Tag.create', { path, name, target, message }),
+
+  tagDelete: (path: string, name: string, deleteRemote = false) =>
+    call<{ ok: boolean }>('Tag.delete', { path, name, deleteRemote }),
+
+  tagPush: (path: string, name: string) => call<{ ok: boolean }>('Tag.push', { path, name }),
+
+  remoteList: (path: string) => call<{ remotes: RemoteInfo[] }>('Remote.list', { path }),
+
+  remoteAdd: (path: string, name: string, url: string) =>
+    call<{ ok: boolean }>('Remote.add', { path, name, url }),
+
+  remoteSetUrl: (path: string, name: string, url: string) =>
+    call<{ ok: boolean }>('Remote.setUrl', { path, name, url }),
+
+  remoteRemove: (path: string, name: string) => call<{ ok: boolean }>('Remote.remove', { path, name }),
 
   branchCheckout: (path: string, target: string) =>
     call<{ ok: boolean }>('Branch.checkout', { path, target }),
