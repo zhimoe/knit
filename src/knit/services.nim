@@ -210,7 +210,7 @@ proc statusPoolWorker(ctx: ptr StatusPoolCtx) {.thread.} =
         repo = statusOf(repoPath)
       except CatchableError:
         repo = Repo(id: repoId(repoPath), name: repoPath.lastPathPart,
-                    path: normalizePath(repoPath), ahead: -1, behind: -1,
+                    path: types.normalizePath(repoPath), ahead: -1, behind: -1,
                     lang: langOf(repoPath.lastPathPart))
       finally:
         release(repoLocks[stripe])
