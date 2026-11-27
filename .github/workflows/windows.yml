@@ -43,7 +43,7 @@ jobs:
         shell: pwsh
         run: |
           bun run build
-          npx tsc --noEmit
+          bunx -p typescript tsc --noEmit
 
       - name: Run Nim unit tests on real Windows
         working-directory: knit
