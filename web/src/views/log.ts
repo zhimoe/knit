@@ -70,6 +70,11 @@ function graphFor(commits: Commit[]): Graph {
   return cachedGraph;
 }
 
+export function logGraphWidth(commits: Commit[]): number {
+  if (!commits.length) return 44;
+  return graphFor(commits).width;
+}
+
 export function renderLogFilters(repo: Repo, filter: LogFilterState): string {
   const branchValue = filter.branchAll ? '全部分支' : repo.branch ?? 'detached';
   const authorValue = filter.author || '全部作者';
@@ -149,7 +154,7 @@ function renderCommitRow(
     <div class="commit-row ${selected ? 'selected' : ''}" role="button" tabindex="-1"
       data-commit="${index}" data-hash="${esc(commit.hash)}"
       title="${esc(commit.subject)} · ${esc(commit.shortHash)} — ${esc(absTime(commit.committedAt))}">
-      <span class="lane-cell">${graphSvg(graph.rows[index], graph.width, selected, primaryColor)}</span>
+      <span class="lane-cell ${graph.clipped ? 'clipped' : ''}">${graphSvg(graph.rows[index], graph.width, selected, primaryColor)}</span>
       <span class="commit-subject-cell">
         ${refs ? `<span class="refs">${refs}</span>` : ''}
         ${merge}

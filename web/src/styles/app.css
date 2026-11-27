@@ -3647,7 +3647,7 @@ body.resizing-v .term-splitter.active {
 
 .log-cols {
   height: 26px;
-  grid-template-columns: 64px minmax(0, 1fr) 110px 84px;
+  grid-template-columns: var(--graph-w, 56px) minmax(0, 1fr) 110px 84px;
   padding: 0 14px;
   margin: 0 -14px;
   background: var(--surface-subtle);
@@ -3657,9 +3657,37 @@ body.resizing-v .term-splitter.active {
   letter-spacing: 0.05em;
 }
 .commit-row {
-  grid-template-columns: 64px minmax(0, 1fr) 110px 84px;
+  grid-template-columns: var(--graph-w, 56px) minmax(0, 1fr) 110px 84px;
   padding: 0 14px;
 }
+.lane-cell {
+  width: var(--graph-w, 56px);
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+}
+.lane-cell svg {
+  display: block;
+  overflow: hidden;
+}
+.lane-cell.clipped::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 18px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--surface-graph));
+}
+.commit-row:hover .lane-cell.clipped::after {
+  background: linear-gradient(90deg, transparent, var(--surface-row-hover));
+}
+.commit-row.selected .lane-cell.clipped::after {
+  background: linear-gradient(90deg, transparent, var(--surface-row-active));
+}
+.refs { max-width: 46%; }
+.ref-pill { max-width: 136px; }
 .commit-row:hover { background: var(--surface-row-hover); }
 .commit-row.selected {
   background: var(--surface-row-active);

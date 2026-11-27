@@ -49,6 +49,7 @@ import { renderFullDiffPage } from './views/fulldiff';
 import { basenameOf, icon, langMeta, shortPath, tint } from './views/icons';
 import {
   hasActiveLogFilters,
+  logGraphWidth,
   renderLogBanner,
   renderLogFilters,
   renderLogFooter,
@@ -726,6 +727,8 @@ function renderLogArea(): void {
 
   const commits = visibleCommitList();
   const filter = currentLogFilter(commits);
+  const pane = document.getElementById('logPane');
+  if (pane) pane.style.setProperty('--graph-w', `${logGraphWidth(commits)}px`);
   $('#logFilters').innerHTML = renderLogFilters(repo, filter);
   $('#logBanner').innerHTML = renderLogBanner(filter);
 
@@ -970,6 +973,8 @@ function refreshLogRowsOnly(): void {
   if (!repo || !list || state.tab !== 'log') return;
   const commits = visibleCommitList();
   const filter = currentLogFilter(commits);
+  const pane = document.getElementById('logPane');
+  if (pane) pane.style.setProperty('--graph-w', `${logGraphWidth(commits)}px`);
   list.innerHTML = renderLogRows(repo, commits, currentCommitIndex(), {
     query: state.filterQuery,
     filterPath: state.fileFilter,
