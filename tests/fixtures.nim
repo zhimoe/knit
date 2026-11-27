@@ -14,10 +14,11 @@ proc makeRepo*(name: string): string =
   result = getTempDir() / "knit-test" / name
   removeDir(result)
   createDir(result)
-  gitOk(result, ["init", "-q"])
+  gitOk(result, ["init", "-q", "-b", "main"])
   gitOk(result, ["config", "user.name", "knit test"])
   gitOk(result, ["config", "user.email", "test@knit.local"])
   gitOk(result, ["config", "commit.gpgsign", "false"])
+  gitOk(result, ["config", "core.autocrlf", "false"])
 
 proc writeAndCommit*(repo, path, content, message: string): string =
   let full = repo / path

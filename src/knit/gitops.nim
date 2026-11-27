@@ -1351,12 +1351,12 @@ proc rebaseState*(repoPath: string): RebaseStateInfo =
   result.conflicts = mergeConflicts(repoPath)
 
 proc makeEditorScript(dir, name, body: string): string =
-  when defined(windows):
-    result = dir / (name & ".cmd")
-    writeFile(result, body)
-  else:
-    result = dir / (name & ".sh")
-    writeFile(result, body)
+  ## Git (including Git for Windows via MSYS2 sh) invokes GIT_SEQUENCE_EDITOR
+  ## and GIT_EDITOR through `/bin/sh -c`, so a POSIX shell script with
+  ## forward-slash paths works uniformly across Windows, macOS, and Linux.
+  result = dir / (name & ".sh")
+  writeFile(result, body)
+  when not defined(windows):
     setFilePermissions(result, {fpUserExec, fpUserRead, fpUserWrite})
 
 proc rebaseStart*(repoPath, onto: string, todo: seq[RebaseTodoItem]): GitResult =
@@ -1388,34 +1388,20 @@ proc rebaseStart*(repoPath, onto: string, todo: seq[RebaseTodoItem]): GitResult 
   let counterPath = workDir / "msg-counter.txt"
   writeFile(counterPath, "0")
 
-  let seqEditor = when defined(windows):
-    makeEditorScript(workDir, "seq-editor",
-      "@echo off\r\ncopy /Y \"" & todoPath & "\" \"%~1\" >NUL\r\n")
-  else:
-    makeEditorScript(workDir, "seq-editor",
-      "#!/bin/sh\ncp '" & todoPath.replace("'", "'\\''") & "' \"$1\"\n")
+  let qTodo = todoPath.replace('\\', '/').replace("'", "'\\''")
+  let seqEditor = makeEditorScript(workDir, "seq-editor",
+    "#!/bin/sh\ncp '" & qTodo & "' \"$1\"\n")
 
-  let msgEditor = when defined(windows):
-    if msgFiles.len == 0:
-      makeEditorScript(workDir, "msg-editor", "@echo off\r\nexit /b 0\r\n")
-    else:
-      var script = "@echo off\r\nset /p IDX=<\"" & counterPath & "\"\r\n"
-      for i, mp in msgFiles:
-        let nonEmpty = readFile(mp).strip().len > 0
-        if nonEmpty:
-          script.add "if \"%IDX%\"==\"" & $i & "\" copy /Y \"" & mp & "\" \"%~1\" >NUL\r\n"
-      script.add "set /a NEXT=IDX+1\r\necho %NEXT%>\"" & counterPath & "\"\r\nexit /b 0\r\n"
-      makeEditorScript(workDir, "msg-editor", script)
-  else:
+  let msgEditor =
     if msgFiles.len == 0:
       makeEditorScript(workDir, "msg-editor", "#!/bin/sh\nexit 0\n")
     else:
-      let qCount = counterPath.replace("'", "'\\''")
+      let qCount = counterPath.replace('\\', '/').replace("'", "'\\''")
       var script = "#!/bin/sh\nIDX=$(cat '" & qCount & "')\n"
       for i, mp in msgFiles:
         let nonEmpty = readFile(mp).strip().len > 0
         if nonEmpty:
-          let qmp = mp.replace("'", "'\\''")
+          let qmp = mp.replace('\\', '/').replace("'", "'\\''")
           script.add "if [ \"$IDX\" = \"" & $i & "\" ]; then cp '" & qmp & "' \"$1\"; fi\n"
       script.add "echo $((IDX + 1)) > '" & qCount & "'\nexit 0\n"
       makeEditorScript(workDir, "msg-editor", script)
@@ -1425,16 +1411,17 @@ proc rebaseStart*(repoPath, onto: string, todo: seq[RebaseTodoItem]): GitResult 
     args.add "--root"
   else:
     args.add onto
+  let seqCmd = "sh '" & seqEditor.replace('\\', '/').replace("'", "'\\''") & "'"
+  let msgCmd = "sh '" & msgEditor.replace('\\', '/').replace("'", "'\\''") & "'"
   let env = @[
-    ("GIT_SEQUENCE_EDITOR", seqEditor),
-    ("GIT_EDITOR", msgEditor),
+    ("GIT_SEQUENCE_EDITOR", seqCmd),
+    ("GIT_EDITOR", msgCmd),
   ]
   runGit(repoPath, args, timeoutMs = 120_000, extraEnv = env, retryLock = true)
 
 proc rebaseContinue*(repoPath: string): GitResult =
-  let editor = when defined(windows): "cmd /c exit 0" else: "true"
   runGit(repoPath, ["rebase", "--continue"], timeoutMs = 120_000,
-         extraEnv = @[("GIT_EDITOR", editor)], retryLock = true)
+         extraEnv = @[("GIT_EDITOR", "true")], retryLock = true)
 
 proc rebaseAbort*(repoPath: string): GitResult =
   runGit(repoPath, ["rebase", "--abort"], timeoutMs = 120_000, retryLock = true)
