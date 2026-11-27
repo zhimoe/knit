@@ -208,6 +208,10 @@ proc statusPoolWorker(ctx: ptr StatusPoolCtx) {.thread.} =
       var repo: Repo
       try:
         repo = statusOf(repoPath)
+      except CatchableError:
+        repo = Repo(id: repoId(repoPath), name: repoPath.lastPathPart,
+                    path: normalizePath(repoPath), ahead: -1, behind: -1,
+                    lang: langOf(repoPath.lastPathPart))
       finally:
         release(repoLocks[stripe])
       let encoded = $toJson(repo)

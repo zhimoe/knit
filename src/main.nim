@@ -102,6 +102,7 @@ proc pollEvents(self: Shell): string =
   drainEventsJson()
 
 proc getState(self: Shell): string =
+  logInfo("ipc", "Shell.getState")
   let settings = loadSettings()
   result = $ %*{
     "root": settings.root,

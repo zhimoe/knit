@@ -99,29 +99,64 @@ jobs:
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
           @{ root = ($ws -replace '\\','/') } | ConvertTo-Json | Set-Content "$dataDir\settings.json"
           $smokeFile = Join-Path $runDir "smoke.txt"
+          $stdoutFile = Join-Path $runDir "stdout.txt"
+          $stderrFile = Join-Path $runDir "stderr.txt"
           $env:KNIT_SMOKE_OUT = $smokeFile
           $env:CI = "true"
-          $p = Start-Process -FilePath "$runDir\knit.exe" -ArgumentList "--smoke" -WorkingDirectory $runDir -PassThru
+          $p = Start-Process -FilePath "$runDir\knit.exe" -ArgumentList "--smoke" `
+            -WorkingDirectory $runDir -RedirectStandardOutput $stdoutFile `
+            -RedirectStandardError $stderrFile -PassThru
           if (-not $p.WaitForExit(30000)) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "=== stdout.txt ==="
+            Get-Content $stdoutFile -ErrorAction SilentlyContinue
+            Write-Host "=== stderr.txt ==="
+            Get-Content $stderrFile -ErrorAction SilentlyContinue
             Write-Host "=== knit.log ==="
             Get-Content "$dataDir\logs\knit.log" -ErrorAction SilentlyContinue
             Write-Host "=== crash.log ==="
             Get-Content "$dataDir\crash.log" -ErrorAction SilentlyContinue
+            Get-Content "$runDir\knit-crash.log" -ErrorAction SilentlyContinue
             throw "MinGW knit.exe --smoke timed out after 30s"
           }
           Write-Host "ExitCode = $($p.ExitCode)"
+          Write-Host "=== stdout.txt ==="
+          Get-Content $stdoutFile -ErrorAction SilentlyContinue
+          Write-Host "=== stderr.txt ==="
+          Get-Content $stderrFile -ErrorAction SilentlyContinue
           Write-Host "=== smoke.txt ==="
           Get-Content $smokeFile -ErrorAction SilentlyContinue
           Write-Host "=== knit.log ==="
           Get-Content "$dataDir\logs\knit.log" -ErrorAction SilentlyContinue
           Write-Host "=== crash.log ==="
           Get-Content "$dataDir\crash.log" -ErrorAction SilentlyContinue
+          Get-Content "$runDir\knit-crash.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:TEMP\knit-crash.log" -ErrorAction SilentlyContinue
           if ($p.ExitCode -ne 0 -or -not (Test-Path $smokeFile)) {
+            Write-Host "=== Debug stacktrace build smoke ==="
+            nim c -d:knitNoLibgit2 -d:knitEmbedWeb -d:knitEmbedWebView2 `
+              --stackTrace:on --lineTrace:on --hints:off --path:../nimi/src `
+              -o:"$runDir\knit-debug.exe" src/main.nim
+            if ($LASTEXITCODE -eq 0) {
+              $dbgOut = Join-Path $runDir "dbg-stdout.txt"
+              $dbgErr = Join-Path $runDir "dbg-stderr.txt"
+              $dp = Start-Process -FilePath "$runDir\knit-debug.exe" -ArgumentList "--smoke" `
+                -WorkingDirectory $runDir -RedirectStandardOutput $dbgOut `
+                -RedirectStandardError $dbgErr -PassThru
+              if (-not $dp.WaitForExit(30000)) {
+                Stop-Process -Id $dp.Id -Force -ErrorAction SilentlyContinue
+              }
+              Write-Host "Debug ExitCode = $($dp.ExitCode)"
+              Write-Host "=== dbg-stdout ==="
+              Get-Content $dbgOut -ErrorAction SilentlyContinue
+              Write-Host "=== dbg-stderr ==="
+              Get-Content $dbgErr -ErrorAction SilentlyContinue
+            }
             throw "MinGW smoke failed (exit=$($p.ExitCode))"
           }
 
       - name: Test Zig cc portable exe (--app:gui) on real Windows + WebView2
+        if: always()
         working-directory: knit
         shell: pwsh
         run: |
@@ -142,11 +177,19 @@ jobs:
           $ws = Join-Path $env:TEMP "knit-smoke-ws"
           @{ root = ($ws -replace '\\','/') } | ConvertTo-Json | Set-Content "$dataDir\settings.json"
           $smokeFile = Join-Path $zigRun "smoke.txt"
+          $stdoutFile = Join-Path $zigRun "stdout.txt"
+          $stderrFile = Join-Path $zigRun "stderr.txt"
           $env:KNIT_SMOKE_OUT = $smokeFile
           $env:CI = "true"
-          $p = Start-Process -FilePath "$zigRun\knit.exe" -ArgumentList "--smoke" -WorkingDirectory $zigRun -PassThru
+          $p = Start-Process -FilePath "$zigRun\knit.exe" -ArgumentList "--smoke" `
+            -WorkingDirectory $zigRun -RedirectStandardOutput $stdoutFile `
+            -RedirectStandardError $stderrFile -PassThru
           if (-not $p.WaitForExit(30000)) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "=== zig stdout ==="
+            Get-Content $stdoutFile -ErrorAction SilentlyContinue
+            Write-Host "=== zig stderr ==="
+            Get-Content $stderrFile -ErrorAction SilentlyContinue
             Write-Host "=== zig knit.log ==="
             Get-Content "$dataDir\logs\knit.log" -ErrorAction SilentlyContinue
             Write-Host "=== zig crash.log ==="
@@ -154,6 +197,10 @@ jobs:
             throw "Zig knit.exe --smoke timed out after 30s"
           }
           Write-Host "Zig ExitCode = $($p.ExitCode)"
+          Write-Host "=== zig stdout ==="
+          Get-Content $stdoutFile -ErrorAction SilentlyContinue
+          Write-Host "=== zig stderr ==="
+          Get-Content $stderrFile -ErrorAction SilentlyContinue
           Write-Host "=== zig smoke.txt ==="
           Get-Content $smokeFile -ErrorAction SilentlyContinue
           Write-Host "=== zig knit.log ==="
