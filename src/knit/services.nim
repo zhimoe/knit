@@ -356,10 +356,13 @@ proc logWork(args: string, context: IpcCallContext): string =
       let allBranches = optBool(node, "all")
       let filterPath = optStr(node, "filterPath")
       let cursor = optStr(node, "cursor")
+      let pickaxe = optStr(node, "pickaxe")
+      let pickaxeRegex = optBool(node, "pickaxeRegex")
       if context.isCancelled:
         return errEnvelope("timeout", "已取消")
       let started = getMonoTime()
-      let page = logPage(path, limit, branch, allBranches, filterPath, cursor)
+      let page = logPage(path, limit, branch, allBranches, filterPath, cursor,
+                         pickaxe, pickaxeRegex)
       var data = newJObject()
       data["commits"] = toJson(page.commits)
       data["hasMore"] = %page.hasMore
@@ -645,10 +648,14 @@ proc cherryPickWork(args: string, context: IpcCallContext): string =
       let bad = readRepo(path)
       if bad.len > 0:
         return bad
+      let hashes = strListArg(node, "hashes")
       let hash = optStr(node, "hash")
       discard context.isCancelled
       withWrite(path):
-        result = writeOk(cherryPick(path, hash))
+        if hashes.len > 0:
+          result = writeOk(cherryPickMany(path, hashes))
+        else:
+          result = writeOk(cherryPick(path, hash))
     except CatchableError as e:
       result = errEnvelope("internal", e.msg)
 
@@ -1355,6 +1362,298 @@ proc blameWork(args: string, context: IpcCallContext): string =
     except CatchableError as e:
       result = errEnvelope("internal", e.msg)
 
+# --- v0.4.0 services: push, line discard, tags, remotes, clone/init, reflog, compare, image diff ---
+
+proc branchPushWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(pushCurrent(path, optBool(node, "includeTags")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc discardHunkWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      let patch = optStr(node, "patch")
+      if patch.len == 0:
+        return errEnvelope("internal", "缺少 patch")
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(applyWorkdirPatch(path, patch, reverse = true))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc compareFilesWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      let baseRev = optStr(node, "base")
+      let headRev = optStr(node, "head")
+      if baseRev.len == 0 or headRev.len == 0:
+        return errEnvelope("internal", "缺少 base 或 head")
+      if context.isCancelled:
+        return errEnvelope("timeout", "已取消")
+      let entries = compareFiles(path, baseRev, headRev)
+      result = limited(okEnvelope(toJson(entries)), "提交对比文件列表")
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc diffRangeWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      let baseRev = optStr(node, "base")
+      let headRev = optStr(node, "head")
+      let file = optStr(node, "file")
+      if baseRev.len == 0 or headRev.len == 0 or file.len == 0:
+        return errEnvelope("internal", "缺少对比参数")
+      if context.isCancelled:
+        return errEnvelope("timeout", "已取消")
+      var d = diffOfRange(path, baseRev, headRev, file,
+                          optBool(node, "ignoreWhitespace"),
+                          optInt(node, "contextLines", 3))
+      if d.path.len == 0:
+        d.path = file
+      result = okEnvelope(%*{"diff": parseJson(diffData(d))})
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc diffImageWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      let file = optStr(node, "file")
+      if file.len == 0:
+        return errEnvelope("internal", "缺少 file")
+      if context.isCancelled:
+        return errEnvelope("timeout", "已取消")
+      let data = imagePreviewOf(path, file,
+                                hash = optStr(node, "hash"),
+                                staged = optBool(node, "staged"),
+                                untracked = optBool(node, "untracked"),
+                                baseRev = optStr(node, "base"),
+                                headRev = optStr(node, "head"))
+      result = limited(okEnvelope(data), "图片预览")
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc reflogWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      let limit = optInt(node, "limit", 80)
+      if context.isCancelled:
+        return errEnvelope("timeout", "已取消")
+      let entries = reflogOf(path, limit)
+      var arr = newJArray()
+      for e in entries:
+        arr.add %*{
+          "hash": e.hash,
+          "shortHash": e.shortHash,
+          "selector": e.selector,
+          "action": e.action,
+          "epochMs": e.epochMs,
+        }
+      result = limited(okEnvelope(%*{"entries": arr}), "reflog")
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc tagCreateWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(createTag(path, optStr(node, "name"),
+                                   optStr(node, "target", "HEAD"),
+                                   optStr(node, "message")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc tagDeleteWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(deleteTag(path, optStr(node, "name"),
+                                   optBool(node, "deleteRemote")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc tagPushWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(pushTag(path, optStr(node, "name")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc remoteListWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      var arr = newJArray()
+      for r in listRemotes(path):
+        arr.add %*{"name": r.name, "fetchUrl": r.fetchUrl, "pushUrl": r.pushUrl}
+      result = okEnvelope(%*{"remotes": arr})
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc remoteAddWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(addRemote(path, optStr(node, "name"), optStr(node, "url")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc remoteSetUrlWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(setRemoteUrl(path, optStr(node, "name"), optStr(node, "url")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc remoteRemoveWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(removeRemote(path, optStr(node, "name")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc repoCloneWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let url = optStr(node, "url")
+      var parentDir = optStr(node, "parentDir")
+      if parentDir.len == 0:
+        parentDir = loadSettings().root
+      let folderName = optStr(node, "folderName")
+      discard context.isCancelled
+      let (res, dest) = cloneRepo(url, parentDir, folderName)
+      if res.code != 0:
+        return gitError("git", res)
+      result = okEnvelope(%*{"ok": true, "path": dest})
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc repoInitWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      var dir = optStr(node, "dir").strip()
+      let name = optStr(node, "name").strip()
+      if dir.len == 0 and name.len > 0:
+        dir = loadSettings().root / name
+      elif dir.len > 0 and name.len > 0 and not dir.endsWith(name):
+        dir = dir / name
+      let branch = optStr(node, "branch", "main")
+      discard context.isCancelled
+      let (res, dest) = initRepo(dir, branch)
+      if res.code != 0:
+        return gitError("git", res)
+      result = okEnvelope(%*{"ok": true, "path": dest})
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc addGitignoreWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(addGitignorePattern(path, optStr(node, "pattern")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
+proc mergeResolveSideWork(args: string, context: IpcCallContext): string =
+  {.cast(gcsafe).}:
+    try:
+      let node = payload(args)
+      let path = requirePath(node)
+      let bad = readRepo(path)
+      if bad.len > 0:
+        return bad
+      discard context.isCancelled
+      withWrite(path):
+        result = writeOk(resolveConflictSide(path, optStr(node, "file"),
+                                             optStr(node, "side")))
+    except CatchableError as e:
+      result = errEnvelope("internal", e.msg)
+
 # --- registration ----------------------------------------------------------
 
 proc registerKnitServices*() =
@@ -1374,6 +1673,15 @@ proc registerKnitServices*() =
     backgroundMethod("reset", resetWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 120_000),
+    backgroundMethod("clone", repoCloneWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 300_000),
+    backgroundMethod("init", repoInitWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 30_000),
+    backgroundMethod("addGitignore", addGitignoreWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 10_000),
   ])
   bindBackgroundService("Log", [
     backgroundMethod("list", logWork,
@@ -1385,6 +1693,12 @@ proc registerKnitServices*() =
     backgroundMethod("refs", refsWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 10_000),
+    backgroundMethod("compareFiles", compareFilesWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 20_000),
+    backgroundMethod("reflog", reflogWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 15_000),
   ])
   bindBackgroundService("Diff", [
     backgroundMethod("commit", diffWork,
@@ -1399,6 +1713,12 @@ proc registerKnitServices*() =
     backgroundMethod("chunk", chunkWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 20_000),
+    backgroundMethod("range", diffRangeWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 20_000),
+    backgroundMethod("image", diffImageWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 20_000),
   ])
   bindBackgroundService("Stage", [
     backgroundMethod("hunk", stageHunkWork,
@@ -1410,6 +1730,9 @@ proc registerKnitServices*() =
     backgroundMethod("discard", discardWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 120_000),
+    backgroundMethod("discardHunk", discardHunkWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 30_000),
   ])
   bindBackgroundService("Commit", [
     backgroundMethod("create", commitWork,
@@ -1435,6 +1758,9 @@ proc registerKnitServices*() =
     backgroundMethod("resolve", mergeResolveWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 20_000),
+    backgroundMethod("resolveSide", mergeResolveSideWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 30_000),
   ])
   bindBackgroundService("Shelf", [
     backgroundMethod("list", shelfListWork,
@@ -1509,6 +1835,9 @@ proc registerKnitServices*() =
     backgroundMethod("pull", branchPullWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 300_000),
+    backgroundMethod("push", branchPushWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 300_000),
     backgroundMethod("checkout", branchCheckoutWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 120_000),
@@ -1524,6 +1853,31 @@ proc registerKnitServices*() =
     backgroundMethod("mergeAbort", branchMergeAbortWork,
       params = [ParamDef(name: "args", typ: "string")],
       resultType = "string", timeoutMs = 120_000),
+  ])
+  bindBackgroundService("Tag", [
+    backgroundMethod("create", tagCreateWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 30_000),
+    backgroundMethod("delete", tagDeleteWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 120_000),
+    backgroundMethod("push", tagPushWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 300_000),
+  ])
+  bindBackgroundService("Remote", [
+    backgroundMethod("list", remoteListWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 15_000),
+    backgroundMethod("add", remoteAddWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 30_000),
+    backgroundMethod("setUrl", remoteSetUrlWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 30_000),
+    backgroundMethod("remove", remoteRemoveWork,
+      params = [ParamDef(name: "args", typ: "string")],
+      resultType = "string", timeoutMs = 30_000),
   ])
   bindBackgroundService("Rebase", [
     backgroundMethod("plan", rebasePlanWork,

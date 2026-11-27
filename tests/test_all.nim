@@ -8,6 +8,7 @@ import ./test_write
 import ./test_ipc
 import ./test_gitlib
 import ./test_rebase
+import ./test_v04
 
 suite "status --porcelain=v2 -z":
   test "parses branch header, counts and flags":

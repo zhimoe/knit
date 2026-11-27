@@ -599,7 +599,8 @@ proc attachRefs*(commits: var seq[Commit], refs: seq[tuple[short, name: string]]
         break
 
 proc logOfCli*(repoPath: string, limit: int, branch = "", allBranches = false,
-               path = "", cursor = ""): seq[Commit] =
+               path = "", cursor = "", pickaxe = "",
+               pickaxeRegex = false): seq[Commit] =
   var args = @["-c", "i18n.logOutputEncoding=UTF-8",
                "log", "-z", "--no-color",
                "--format=%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%b"]
@@ -608,6 +609,13 @@ proc logOfCli*(repoPath: string, limit: int, branch = "", allBranches = false,
     args.add $limit
   if path.len > 0:
     args.add "--follow"
+  if pickaxe.len > 0:
+    if pickaxeRegex:
+      args.add "-G"
+      args.add pickaxe
+    else:
+      args.add "-S"
+      args.add pickaxe
   if allBranches:
     args.add "--all"
   elif branch.len > 0:
@@ -664,13 +672,15 @@ proc logOfCli*(repoPath: string, limit: int, branch = "", allBranches = false,
         cmp(rank(a), rank(b)))
 
 proc logPage*(repoPath: string, limit: int, branch = "", allBranches = false,
-              path = "", cursor = ""): tuple[commits: seq[Commit],
+              path = "", cursor = "", pickaxe = "",
+              pickaxeRegex = false): tuple[commits: seq[Commit],
               hasMore: bool, nextCursor: string] =
-  ## Paginated log: libgit2 in-process for normal/branch/all logs, CLI for --follow path filter.
+  ## Paginated log: libgit2 in-process for normal/branch/all logs, CLI for --follow or pickaxe.
   when defined(knitLibgit2):
-    if path.len == 0:
+    if path.len == 0 and pickaxe.len == 0:
       return logOfLib(repoPath, limit, branch, allBranches, cursor)
-  let fetched = logOfCli(repoPath, limit + 1, branch, allBranches, path, cursor)
+  let fetched = logOfCli(repoPath, limit + 1, branch, allBranches, path, cursor,
+                         pickaxe, pickaxeRegex)
   if fetched.len > limit:
     result.commits = fetched[0 ..< limit]
     result.hasMore = true
@@ -680,8 +690,9 @@ proc logPage*(repoPath: string, limit: int, branch = "", allBranches = false,
     result.hasMore = false
 
 proc logOf*(repoPath: string, limit: int, branch = "", allBranches = false,
-            path = "", cursor = ""): seq[Commit] =
-  logPage(repoPath, limit, branch, allBranches, path, cursor).commits
+            path = "", cursor = "", pickaxe = "",
+            pickaxeRegex = false): seq[Commit] =
+  logPage(repoPath, limit, branch, allBranches, path, cursor, pickaxe, pickaxeRegex).commits
 
 # --- file lists -----------------------------------------------------------
 
@@ -1071,6 +1082,17 @@ proc applyCachedPatch*(repoPath, patch: string, reverse: bool): GitResult =
 
 proc createStashSnapshot*(repoPath, label: string): string
 
+proc applyWorkdirPatch*(repoPath, patch: string, reverse = true): GitResult =
+  ## Apply/reverse a hunk or line-level patch directly on the working tree.
+  if patch.strip().len == 0:
+    return GitResult(code: 0)
+  discard createStashSnapshot(repoPath, "knit:before-discard-hunk")
+  var args = @["apply", "--whitespace=nowarn"]
+  if reverse:
+    args.add "--reverse"
+  args.add "-"
+  result = runGit(repoPath, args, stdin = patch, timeoutMs = 120_000)
+
 proc discardFiles*(repoPath: string, paths: seq[string]): GitResult =
   ## Guarded by the UI: snapshots tracked changes before restoring, and removes
   ## selected untracked / newly-staged files safely within the repository root.
@@ -1139,7 +1161,7 @@ proc commitStaged*(repoPath, message: string, amend: bool): GitResult =
     args.add "--amend"
   result = runGit(repoPath, args, stdin = message, timeoutMs = 120_000)
 
-proc pushCurrent*(repoPath: string): GitResult =
+proc pushCurrent*(repoPath: string, includeTags = false): GitResult =
   let branchRes = runGit(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"])
   if branchRes.code != 0:
     return branchRes
@@ -1150,14 +1172,19 @@ proc pushCurrent*(repoPath: string): GitResult =
                                   "--symbolic-full-name", "@{u}"],
                         okCodes = @[0, 128])
   if upstream.code == 0 and upstream.output.strip().len > 0:
-    result = runGit(repoPath, ["push"], timeoutMs = 300_000)
+    var args = @["push"]
+    if includeTags:
+      args.add "--follow-tags"
+    result = runGit(repoPath, args, timeoutMs = 300_000)
   else:
     let remotes = runGit(repoPath, ["remote"])
     let remote = if remotes.code == 0 and remotes.output.strip().len > 0:
                    remotes.output.strip().splitLines()[0]
                  else: "origin"
-    result = runGit(repoPath, ["push", "--set-upstream", remote, branch],
-                    timeoutMs = 300_000)
+    var args = @["push", "--set-upstream", remote, branch]
+    if includeTags:
+      args.add "--follow-tags"
+    result = runGit(repoPath, args, timeoutMs = 300_000)
 
 proc bookmarkBefore*(repoPath, op: string) =
   ## docs/04 §8: a durable pointer to the pre-operation HEAD.
@@ -1523,3 +1550,259 @@ proc removeWorktree*(repoPath, dir: string): GitResult =
 
 proc gitVersion*(repoPath: string): GitResult =
   runGit(repoPath, ["--version"])
+
+
+# --- v0.4.0: tags, remotes, reflog, compare, clone/init, gitignore, binary merge ---
+
+type
+  RemoteInfo* = object
+    name*: string
+    fetchUrl*: string
+    pushUrl*: string
+
+  ReflogEntry* = object
+    hash*: string
+    shortHash*: string
+    selector*: string
+    action*: string
+    epochMs*: int64
+
+proc cherryPickMany*(repoPath: string, hashes: seq[string]): GitResult =
+  ## Cherry-pick one or more commits in order.
+  var clean: seq[string]
+  for h in hashes:
+    let s = h.strip()
+    if s.len > 0:
+      clean.add s
+  if clean.len == 0:
+    return GitResult(code: -1, error: "缺少要 cherry-pick 的提交")
+  bookmarkBefore(repoPath, "cherry-pick")
+  var args = @["cherry-pick"]
+  args.add clean
+  runGit(repoPath, args, timeoutMs = 120_000, retryLock = true)
+
+proc compareFiles*(repoPath, baseRev, headRev: string): seq[FileEntry] =
+  ## List changed files with +/- stats between two revisions (`baseRev..headRev`).
+  if baseRev.strip().len == 0 or headRev.strip().len == 0:
+    return @[]
+  let statRes = runGit(repoPath, ["diff", "--numstat", "-M", "-z", baseRev, headRev])
+  let nameRes = runGit(repoPath, ["diff", "--name-status", "-M", "-z", baseRev, headRev])
+  if statRes.code != 0 or nameRes.code != 0:
+    return @[]
+  var statByPath: Table[string, NumStat]
+  for (path, _, st) in parseNumstatZ(statRes.output):
+    statByPath[path] = st
+  let tokens = nameRes.output.split('\0')
+  var i = 0
+  while i < tokens.len:
+    let raw = tokens[i]
+    inc i
+    if raw.len == 0:
+      continue
+    let code = normalizeStatus($raw[0])
+    var oldPath = ""
+    var path = ""
+    if code in ["R", "C"]:
+      if i + 1 >= tokens.len:
+        break
+      oldPath = tokens[i]
+      path = tokens[i + 1]
+      i += 2
+    else:
+      if i >= tokens.len:
+        break
+      path = tokens[i]
+      inc i
+    var entry = FileEntry(path: path, oldPath: oldPath, status: code, group: "commit")
+    if statByPath.hasKey(path):
+      entry.additions = statByPath[path].additions
+      entry.deletions = statByPath[path].deletions
+      entry.binary = statByPath[path].binary
+    result.add entry
+
+proc reflogOf*(repoPath: string, limit = 80): seq[ReflogEntry] =
+  ## Read recent HEAD reflog entries for safe Undo / recovery.
+  let n = max(1, min(300, limit))
+  let res = runGit(repoPath, [
+    "-c", "i18n.logOutputEncoding=UTF-8",
+    "reflog", "-z", "-n", $n,
+    "--format=%H%x1f%h%x1f%gd%x1f%gs%x1f%ct",
+  ], okCodes = @[0, 128])
+  if res.code != 0:
+    return @[]
+  for rec in res.output.split('\0'):
+    if rec.len == 0:
+      continue
+    let f = rec.split('\x1f')
+    if f.len < 5:
+      continue
+    var ts: int64 = 0
+    try:
+      ts = parseBiggestInt(f[4].strip()) * 1000
+    except ValueError:
+      ts = 0
+    result.add ReflogEntry(
+      hash: f[0].strip(),
+      shortHash: f[1].strip(),
+      selector: f[2].strip(),
+      action: f[3].strip(),
+      epochMs: ts,
+    )
+
+proc createTag*(repoPath, name, target, message: string): GitResult =
+  let clean = name.strip()
+  if clean.len == 0:
+    return GitResult(code: -1, error: "Tag 名称不能为空")
+  let rev = if target.strip().len > 0: target.strip() else: "HEAD"
+  let msg = message.strip()
+  if msg.len > 0:
+    runGit(repoPath, ["tag", "-a", clean, "-m", msg, rev], timeoutMs = 60_000)
+  else:
+    runGit(repoPath, ["tag", clean, rev], timeoutMs = 60_000)
+
+proc deleteTag*(repoPath, name: string, deleteRemote = false): GitResult =
+  let clean = name.strip()
+  if clean.len == 0:
+    return GitResult(code: -1, error: "Tag 名称不能为空")
+  result = runGit(repoPath, ["tag", "-d", clean], timeoutMs = 60_000)
+  if result.code == 0 and deleteRemote:
+    let remotes = runGit(repoPath, ["remote"])
+    let remote = if remotes.code == 0 and remotes.output.strip().len > 0:
+                   remotes.output.strip().splitLines()[0]
+                 else: "origin"
+    result = runGit(repoPath, ["push", remote, ":refs/tags/" & clean], timeoutMs = 120_000)
+
+proc pushTag*(repoPath, name: string): GitResult =
+  let remotes = runGit(repoPath, ["remote"])
+  let remote = if remotes.code == 0 and remotes.output.strip().len > 0:
+                 remotes.output.strip().splitLines()[0]
+               else: "origin"
+  let clean = name.strip()
+  if clean.len == 0 or clean == "--all":
+    runGit(repoPath, ["push", remote, "--tags"], timeoutMs = 300_000)
+  else:
+    runGit(repoPath, ["push", remote, "refs/tags/" & clean], timeoutMs = 300_000)
+
+proc listRemotes*(repoPath: string): seq[RemoteInfo] =
+  let res = runGit(repoPath, ["remote", "-v"])
+  if res.code != 0:
+    return @[]
+  var byName: Table[string, RemoteInfo]
+  var order: seq[string]
+  for line in res.output.splitLines():
+    let trimmed = line.strip()
+    if trimmed.len == 0:
+      continue
+    let tabIdx = trimmed.find('\t')
+    if tabIdx <= 0:
+      continue
+    let name = trimmed[0 ..< tabIdx].strip()
+    let rest = trimmed[tabIdx + 1 .. ^1].strip()
+    var url = rest
+    var kind = "fetch"
+    if rest.endsWith("(fetch)"):
+      url = rest[0 ..< rest.len - "(fetch)".len].strip()
+      kind = "fetch"
+    elif rest.endsWith("(push)"):
+      url = rest[0 ..< rest.len - "(push)".len].strip()
+      kind = "push"
+    if not byName.hasKey(name):
+      byName[name] = RemoteInfo(name: name)
+      order.add name
+    var info = byName[name]
+    if kind == "fetch":
+      info.fetchUrl = url
+    else:
+      info.pushUrl = url
+    byName[name] = info
+  for name in order:
+    result.add byName[name]
+
+proc addRemote*(repoPath, name, url: string): GitResult =
+  let n = name.strip()
+  let u = url.strip()
+  if n.len == 0 or u.len == 0:
+    return GitResult(code: -1, error: "远端名称与 URL 不能为空")
+  runGit(repoPath, ["remote", "add", n, u], timeoutMs = 30_000)
+
+proc setRemoteUrl*(repoPath, name, url: string): GitResult =
+  let n = name.strip()
+  let u = url.strip()
+  if n.len == 0 or u.len == 0:
+    return GitResult(code: -1, error: "远端名称与 URL 不能为空")
+  runGit(repoPath, ["remote", "set-url", n, u], timeoutMs = 30_000)
+
+proc removeRemote*(repoPath, name: string): GitResult =
+  let n = name.strip()
+  if n.len == 0:
+    return GitResult(code: -1, error: "远端名称不能为空")
+  runGit(repoPath, ["remote", "remove", n], timeoutMs = 30_000)
+
+proc cloneRepo*(url, parentDir, folderName: string): tuple[res: GitResult, dest: string] =
+  let u = url.strip()
+  if u.len == 0:
+    return (GitResult(code: -1, error: "仓库 URL 不能为空"), "")
+  if parentDir.len == 0 or not dirExists(parentDir):
+    return (GitResult(code: -1, error: "目标父目录不存在"), "")
+  var name = folderName.strip()
+  if name.len == 0:
+    var tail = u.replace('\\', '/')
+    while tail.endsWith("/"):
+      tail.setLen(tail.len - 1)
+    let slash = tail.rfind('/')
+    if slash >= 0:
+      tail = tail[slash + 1 .. ^1]
+    elif ':' in tail:
+      tail = tail[tail.rfind(':') + 1 .. ^1]
+    if tail.endsWith(".git"):
+      tail = tail[0 ..< tail.len - 4]
+    name = tail.strip()
+  if name.len == 0 or '/' in name or '\\' in name or name == "." or name == "..":
+    return (GitResult(code: -1, error: "无效的目标文件夹名称"), "")
+  let dest = normalizePath(parentDir / name)
+  if dirExists(dest) or fileExists(dest):
+    return (GitResult(code: -1, error: "目标目录已存在：" & name), dest)
+  let res = runGit(parentDir, ["clone", "--", u, dest], timeoutMs = 300_000)
+  (res, dest)
+
+proc initRepo*(dir, defaultBranch: string): tuple[res: GitResult, dest: string] =
+  let clean = dir.strip()
+  if clean.len == 0:
+    return (GitResult(code: -1, error: "目标目录不能为空"), "")
+  try:
+    createDir(clean)
+  except CatchableError as e:
+    return (GitResult(code: -1, error: "无法创建目录：" & e.msg), "")
+  let branch = if defaultBranch.strip().len > 0: defaultBranch.strip() else: "main"
+  let res = runGit(clean, ["init", "-b", branch], timeoutMs = 30_000)
+  (res, normalizePath(clean))
+
+proc addGitignorePattern*(repoPath, pattern: string): GitResult =
+  let p = pattern.strip().replace('\\', '/')
+  if p.len == 0 or '\n' in p or '\r' in p:
+    return GitResult(code: -1, error: "无效的 .gitignore 规则")
+  let ignoreFile = repoPath / ".gitignore"
+  try:
+    var existing = if fileExists(ignoreFile): readFile(ignoreFile) else: ""
+    for line in existing.splitLines():
+      if line.strip() == p:
+        return GitResult(code: 0, output: "规则已存在")
+    if existing.len > 0 and not existing.endsWith("\n"):
+      existing.add "\n"
+    existing.add p & "\n"
+    writeFile(ignoreFile, existing)
+    GitResult(code: 0, output: p)
+  except CatchableError as e:
+    GitResult(code: -1, error: e.msg)
+
+proc resolveConflictSide*(repoPath, path, side: string): GitResult =
+  ## Resolve a conflict (including binary files) by taking ours (HEAD) or theirs.
+  if side notin ["ours", "theirs"]:
+    return GitResult(code: -1, error: "无效的冲突保留方向：" & side)
+  if path.len == 0 or path.isAbsolute or ".." in path.replace('\\', '/').split('/'):
+    return GitResult(code: -1, error: "拒绝操作仓库之外的路径")
+  let co = runGit(repoPath, ["checkout", "--" & side, "--", path],
+                  timeoutMs = 60_000, retryLock = true)
+  if co.code != 0:
+    return co
+  addFile(repoPath, path)

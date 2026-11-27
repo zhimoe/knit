@@ -171,6 +171,78 @@ proc setExclusions(self: Shell, argsJson: string): string =
   except CatchableError as e:
     result = $ %*{"ok": false, "error": e.msg}
 
+proc saveSettingsIpc(self: Shell, argsJson: string): string =
+  var settings = loadSettings()
+  try:
+    let node = parseJson(argsJson)
+    if node.hasKey("root") and node["root"].kind == JString:
+      let nextRoot = normalizePath(node["root"].getStr(""))
+      if nextRoot.len > 0 and nextRoot != settings.root:
+        settings.root = nextRoot
+        clearIndex()
+        restartWatch(settings.root)
+    if node.hasKey("scanDepth") and node["scanDepth"].kind == JInt:
+      settings.scanDepth = max(1, min(8, node["scanDepth"].getInt(4)))
+    if node.hasKey("excludeGlobs") and node["excludeGlobs"].kind == JArray:
+      settings.excludeGlobs = @[]
+      for item in node["excludeGlobs"]:
+        let s = item.getStr("").strip()
+        if s.len > 0:
+          settings.excludeGlobs.add s
+    if node.hasKey("diffMode") and node["diffMode"].kind == JString:
+      let m = node["diffMode"].getStr("split")
+      if m in ["split", "unified"]:
+        settings.diffMode = m
+    if node.hasKey("editor") and node["editor"].kind == JObject:
+      settings.editorCommand = node["editor"]{"command"}.getStr("").strip()
+      if node["editor"].hasKey("args") and node["editor"]["args"].kind == JArray:
+        settings.editorArgs = @[]
+        for item in node["editor"]["args"]:
+          settings.editorArgs.add item.getStr("")
+    if node.hasKey("terminal") and node["terminal"].kind == JObject:
+      settings.terminalShell = node["terminal"]{"shell"}.getStr("").strip()
+      if node["terminal"].hasKey("args") and node["terminal"]["args"].kind == JArray:
+        settings.terminalArgs = @[]
+        for item in node["terminal"]["args"]:
+          settings.terminalArgs.add item.getStr("")
+    if node.hasKey("protectedBranches") and node["protectedBranches"].kind == JArray:
+      settings.protectedBranches = @[]
+      for item in node["protectedBranches"]:
+        let s = item.getStr("").strip()
+        if s.len > 0:
+          settings.protectedBranches.add s
+    if node.hasKey("confirmDangerous") and node["confirmDangerous"].kind == JBool:
+      settings.confirmDangerous = node["confirmDangerous"].getBool(true)
+    saveSettings(settings)
+    result = $ %*{"ok": true, "state": parseJson(self.getState())}
+  except CatchableError as e:
+    result = $ %*{"ok": false, "error": e.msg}
+
+proc reapEditors()
+
+proc revealPath(self: Shell, path: string): string =
+  reapEditors()
+  if path.len == 0:
+    return $ %*{"ok": false, "error": "路径为空"}
+  try:
+    when defined(macosx):
+      if dirExists(path):
+        editorProcs.add startProcess("open", args = @[path], options = {poUsePath})
+      else:
+        editorProcs.add startProcess("open", args = @["-R", path], options = {poUsePath})
+    elif defined(windows):
+      let winPath = path.replace('/', '\\')
+      if dirExists(path):
+        editorProcs.add startProcess("explorer.exe", args = @[winPath], options = {poUsePath})
+      else:
+        editorProcs.add startProcess("explorer.exe", args = @["/select," & winPath], options = {poUsePath})
+    else:
+      let target = if dirExists(path): path else: path.parentDir
+      editorProcs.add startProcess("xdg-open", args = @[target], options = {poUsePath})
+    result = $ %*{"ok": true}
+  except CatchableError as e:
+    result = $ %*{"ok": false, "error": e.msg}
+
 proc pickRoot(self: Shell): string =
   let picked = dialog.open("选择根目录（knit 会扫描其下所有 git 仓库）",
                            directory = true, defaultPath = loadSettings().root)
@@ -362,7 +434,8 @@ when isMainModule:
     registerKnitServices()
     let shell = Shell()
     bindService(shell, version, ready, pollEvents, getState, setRoot, setSelected,
-                setExclusions, pickRoot, openFile, pickPatch, jsError, setTheme)
+                setExclusions, saveSettingsIpc, revealPath, pickRoot, openFile,
+                pickPatch, jsError, setTheme)
     try:
       discard agent.ensureDefaultConfig()
     except CatchableError as e:

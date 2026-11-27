@@ -4,7 +4,7 @@
 ## the page only renders rows and wraps `hl` ranges in <span>. The CLI is the
 ## M1 source (M1.1 swaps to libgit2 but the wire shape stays put).
 
-import std/[strutils]
+import std/[base64, json, os, osproc, streams, strutils]
 
 import ./[gitlib, gitops, types]
 
@@ -417,3 +417,153 @@ proc diffOfWorkdir*(repoPath, path: string, staged: bool, untracked: bool,
   else:
     result = diffOfWorkdirCli(repoPath, path, staged, untracked,
                               ignoreWhitespace, contextLines)
+
+
+proc diffOfRange*(repoPath, baseRev, headRev, path: string,
+                  ignoreWhitespace = false, contextLines = 3): DiffFile =
+  ## Diff one file between two arbitrary revisions (`baseRev` -> `headRev`).
+  var args = @["diff"]
+  args.add diffArgs(ignoreWhitespace, contextLines)
+  args.add baseRev
+  args.add headRev
+  args.add "--"
+  if path.len > 0:
+    args.add path
+  let res = runGit(repoPath, args, timeoutMs = 30_000)
+  result = newDiffFile()
+  result.path = path
+  if res.code != 0:
+    return
+  let files = parseUnifiedDiff(res.output)
+  if files.len > 0:
+    result = files[0]
+
+proc imageMime*(path: string): string =
+  let ext = splitFile(path).ext.toLowerAscii()
+  case ext
+  of ".png": "image/png"
+  of ".jpg", ".jpeg": "image/jpeg"
+  of ".gif": "image/gif"
+  of ".webp": "image/webp"
+  of ".svg": "image/svg+xml"
+  of ".ico": "image/x-icon"
+  of ".bmp": "image/bmp"
+  else: ""
+
+const MaxImagePreviewBytes = 150 * 1024  # Keeps combined base64 safely <= 240 KB IPC cap
+
+proc rawGitBlob(repoPath, spec: string): tuple[ok: bool, data: string, tooLarge: bool] =
+  ## Read exact raw bytes from `git cat-file -p <spec>` without UTF-8 sanitising.
+  const procOpts = when defined(windows): {poUsePath, poDaemon} else: {poUsePath}
+  var p: Process
+  try:
+    p = startProcess(gitBin(), args = @["-C", repoPath, "cat-file", "-p", spec],
+                     options = procOpts)
+  except OSError:
+    return (false, "", false)
+  defer:
+    try: p.close() except CatchableError: discard
+  var buf = newStringOfCap(4096)
+  var chunk: array[8192, char]
+  var tooLarge = false
+  let s = p.outputStream
+  while true:
+    let n = s.readData(addr chunk[0], chunk.len)
+    if n <= 0:
+      break
+    if buf.len + n > MaxImagePreviewBytes + 1:
+      tooLarge = true
+      continue
+    let oldLen = buf.len
+    buf.setLen(oldLen + n)
+    copyMem(addr buf[oldLen], addr chunk[0], n)
+  let code = try: waitForExit(p, 15_000) except CatchableError: -1
+  if code != 0:
+    return (false, "", false)
+  if tooLarge:
+    return (true, "", true)
+  (true, buf, false)
+
+proc encodeImageDataUrl(mime, raw: string): tuple[url: string, size: int, tooLarge: bool] =
+  if raw.len == 0:
+    return ("", 0, false)
+  if raw.len > MaxImagePreviewBytes:
+    return ("", raw.len, true)
+  ("data:" & mime & ";base64," & encode(raw), raw.len, false)
+
+proc imagePreviewOf*(repoPath, filePath: string, hash = "", staged = false,
+                     untracked = false, baseRev = "", headRev = ""): JsonNode =
+  ## Return base64 data URLs for before/after versions of an image file.
+  let mime = imageMime(filePath)
+  if mime.len == 0:
+    return %*{"supported": false}
+  var oldRaw = ""
+  var newRaw = ""
+  var anyTooLarge = false
+  if baseRev.len > 0 and headRev.len > 0:
+    let a = rawGitBlob(repoPath, baseRev & ":" & filePath)
+    let b = rawGitBlob(repoPath, headRev & ":" & filePath)
+    if a.tooLarge or b.tooLarge: anyTooLarge = true
+    if a.ok: oldRaw = a.data
+    if b.ok: newRaw = b.data
+  elif hash.len > 0:
+    let parents = parentsOf(repoPath, hash)
+    if parents.len > 0:
+      let a = rawGitBlob(repoPath, parents[0] & ":" & filePath)
+      if a.tooLarge: anyTooLarge = true
+      if a.ok: oldRaw = a.data
+    let b = rawGitBlob(repoPath, hash & ":" & filePath)
+    if b.tooLarge: anyTooLarge = true
+    if b.ok: newRaw = b.data
+  else:
+    if not untracked:
+      let a = rawGitBlob(repoPath, "HEAD:" & filePath)
+      if a.tooLarge: anyTooLarge = true
+      if a.ok: oldRaw = a.data
+    if staged:
+      let b = rawGitBlob(repoPath, ":" & filePath)
+      if b.tooLarge: anyTooLarge = true
+      if b.ok: newRaw = b.data
+    else:
+      let full = repoPath / filePath
+      if fileExists(full):
+        try:
+          let sz = getFileSize(full)
+          if sz <= MaxImagePreviewBytes:
+            newRaw = readFile(full)
+          else:
+            anyTooLarge = true
+        except CatchableError:
+          discard
+  if anyTooLarge:
+    return %*{
+      "supported": true,
+      "mime": mime,
+      "tooLarge": true,
+      "beforeDataUrl": "",
+      "afterDataUrl": "",
+      "beforeBytes": oldRaw.len,
+      "afterBytes": newRaw.len,
+    }
+  let oldEnc = encodeImageDataUrl(mime, oldRaw)
+  let newEnc = encodeImageDataUrl(mime, newRaw)
+  # Ensure total payload fits comfortably under 240 KB IPC ceiling.
+  if oldEnc.tooLarge or newEnc.tooLarge or (oldEnc.url.len + newEnc.url.len > 220_000):
+    return %*{
+      "supported": true,
+      "mime": mime,
+      "tooLarge": true,
+      "beforeDataUrl": "",
+      "afterDataUrl": "",
+      "beforeBytes": oldRaw.len,
+      "afterBytes": newRaw.len,
+    }
+  %*{
+    "supported": true,
+    "mime": mime,
+    "tooLarge": false,
+    "beforeDataUrl": oldEnc.url,
+    "afterDataUrl": newEnc.url,
+    "beforeBytes": oldEnc.size,
+    "afterBytes": newEnc.size,
+  }
