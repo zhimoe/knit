@@ -1,0 +1,160 @@
+name: Windows Smoke & Portable Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout knit
+        uses: actions/checkout@v4
+        with:
+          path: knit
+
+      - name: Checkout nimi
+        uses: actions/checkout@v4
+        with:
+          repository: zhimoe/nimi
+          path: nimi
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Nim 2.4.2
+        uses: jiro4989/setup-nim-action@v2.3.1
+        with:
+          nim-version: '2.4.2'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: '0.14.0'
+
+      - name: Build & typecheck frontend
+        working-directory: knit/web
+        shell: pwsh
+        run: |
+          bun run build
+          npx tsc --noEmit
+
+      - name: Run Nim unit tests on real Windows
+        working-directory: knit
+        shell: pwsh
+        run: |
+          git config --global user.name "knit-ci"
+          git config --global user.email "ci@knit.local"
+          nim c -r -d:knitNoLibgit2 --hints:off --path:../nimi/src tests/test_all.nim
+
+      - name: Build Windows portable exe (MinGW gcc)
+        working-directory: knit
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/knit-win64-portable | Out-Null
+          nim c -d:release -d:knitNoLibgit2 -d:knitEmbedWeb -d:knitEmbedWebView2 `
+            --passL:-Wl,--subsystem,windows --passL:-s `
+            --hints:off --path:../nimi/src `
+            -o:dist/knit-win64-portable/knit.exe src/main.nim
+          Copy-Item -Force ..\nimi\src\nimi\platform\windows\webview2\sdk\x64\WebView2Loader.dll dist\knit-win64-portable\WebView2Loader.dll
+          New-Item -ItemType File -Force -Path dist/knit-win64-portable/knit.portable | Out-Null
+          Compress-Archive -Force -Path dist/knit-win64-portable -DestinationPath dist/knit-win64-portable.zip
+          Get-Item dist/knit-win64-portable/knit.exe, dist/knit-win64-portable.zip | Select-Object Name, Length
+
+      - name: Smoke test MinGW portable exe on real Windows + WebView2
+        working-directory: knit
+        shell: pwsh
+        run: |
+          $ws = Join-Path $env:TEMP "knit-smoke-ws"
+          if (Test-Path $ws) { Remove-Item -Recurse -Force $ws }
+          New-Item -ItemType Directory -Force -Path "$ws\repo-a", "$ws\repo-b" | Out-Null
+          foreach ($r in @("$ws\repo-a", "$ws\repo-b")) {
+            git -C $r init -q -b main
+            Set-Content "$r\hello.txt" "hello from windows smoke`n"
+            git -C $r add .
+            git -C $r commit -q -m "feat: initial windows smoke commit"
+          }
+          $runDir = Join-Path $env:TEMP "knit-smoke-run-mingw"
+          if (Test-Path $runDir) { Remove-Item -Recurse -Force $runDir }
+          Copy-Item -Recurse -Force dist/knit-win64-portable $runDir
+          $dataDir = Join-Path $runDir "data"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          @{ root = ($ws -replace '\\','/') } | ConvertTo-Json | Set-Content "$dataDir\settings.json"
+          $smokeFile = Join-Path $runDir "smoke.txt"
+          $env:KNIT_SMOKE_OUT = $smokeFile
+          $env:CI = "true"
+          $p = Start-Process -FilePath "$runDir\knit.exe" -ArgumentList "--smoke" -WorkingDirectory $runDir -PassThru
+          if (-not $p.WaitForExit(30000)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "=== knit.log ==="
+            Get-Content "$dataDir\logs\knit.log" -ErrorAction SilentlyContinue
+            Write-Host "=== crash.log ==="
+            Get-Content "$dataDir\crash.log" -ErrorAction SilentlyContinue
+            throw "MinGW knit.exe --smoke timed out after 30s"
+          }
+          Write-Host "ExitCode = $($p.ExitCode)"
+          Write-Host "=== smoke.txt ==="
+          Get-Content $smokeFile -ErrorAction SilentlyContinue
+          Write-Host "=== knit.log ==="
+          Get-Content "$dataDir\logs\knit.log" -ErrorAction SilentlyContinue
+          Write-Host "=== crash.log ==="
+          Get-Content "$dataDir\crash.log" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $smokeFile)) {
+            throw "MinGW smoke failed (exit=$($p.ExitCode))"
+          }
+
+      - name: Test Zig cc portable exe (--app:gui) on real Windows + WebView2
+        working-directory: knit
+        shell: pwsh
+        run: |
+          $zigRun = Join-Path $env:TEMP "knit-smoke-run-zig"
+          if (Test-Path $zigRun) { Remove-Item -Recurse -Force $zigRun }
+          New-Item -ItemType Directory -Force -Path $zigRun | Out-Null
+          Set-Content "$zigRun\zig-cc.cmd" "@zig cc -target x86_64-windows-gnu %*"
+          nim c --os:windows --cpu:amd64 --cc:clang --app:gui `
+            -d:release -d:knitNoLibgit2 -d:knitEmbedWeb -d:knitEmbedWebView2 `
+            --passC:-Os --passL:-Wl,--subsystem,windows --passL:-s `
+            --clang.exe:"$zigRun\zig-cc.cmd" --clang.linkerexe:"$zigRun\zig-cc.cmd" `
+            --nimcache:"$zigRun\cache" --hints:off --path:../nimi/src `
+            -o:"$zigRun\knit.exe" src/main.nim
+          New-Item -ItemType File -Force -Path "$zigRun\knit.portable" | Out-Null
+          $dataDir = Join-Path $zigRun "data"
+          New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+          $ws = Join-Path $env:TEMP "knit-smoke-ws"
+          @{ root = ($ws -replace '\\','/') } | ConvertTo-Json | Set-Content "$dataDir\settings.json"
+          $smokeFile = Join-Path $zigRun "smoke.txt"
+          $env:KNIT_SMOKE_OUT = $smokeFile
+          $env:CI = "true"
+          $p = Start-Process -FilePath "$zigRun\knit.exe" -ArgumentList "--smoke" -WorkingDirectory $zigRun -PassThru
+          if (-not $p.WaitForExit(30000)) {
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            Write-Host "=== zig knit.log ==="
+            Get-Content "$dataDir\logs\knit.log" -ErrorAction SilentlyContinue
+            Write-Host "=== zig crash.log ==="
+            Get-Content "$dataDir\crash.log" -ErrorAction SilentlyContinue
+            throw "Zig knit.exe --smoke timed out after 30s"
+          }
+          Write-Host "Zig ExitCode = $($p.ExitCode)"
+          Write-Host "=== zig smoke.txt ==="
+          Get-Content $smokeFile -ErrorAction SilentlyContinue
+          Write-Host "=== zig knit.log ==="
+          Get-Content "$dataDir\logs\knit.log" -ErrorAction SilentlyContinue
+          Write-Host "=== zig crash.log ==="
+          Get-Content "$dataDir\crash.log" -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0 -or -not (Test-Path $smokeFile)) {
+            throw "Zig smoke failed (exit=$($p.ExitCode))"
+          }
+
+      - name: Upload Windows portable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: knit-win64-portable
+          path: |
+            knit/dist/knit-win64-portable.zip
+            knit/dist/knit-win64-portable/knit.exe
