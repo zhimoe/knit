@@ -196,7 +196,7 @@ const emit = (name, payload) => {
 
 window.nimi = {
   async call(method, arg) {
-    if (method === 'Shell.version') return 'knit 0.1.0 (harness)';
+    if (method === 'Shell.version') return 'knit 0.3.0 (harness)';
     if (method === 'Shell.getState') {
       return JSON.stringify({
         root: '/Users/zhimoe/code', scanDepth: 4,

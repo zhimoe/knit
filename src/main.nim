@@ -79,7 +79,7 @@ proc showFatalError(stage, detail: string) =
                              newWideCString("Knit 启动失败"), 0x00000010'u32)
 
 proc version(self: Shell): string =
-  "knit 0.1.0"
+  "knit 0.3.0"
 
 proc ready(self: Shell, repos: int, ms: int) =
   ## Called by the page once the sidebar has painted (docs/07 M0 0.1).
@@ -358,7 +358,7 @@ when isMainModule:
       if arg == "--smoke":
         quitWhenReady = true
 
-    logInfo("boot", "starting knit 0.1.0")
+    logInfo("boot", "starting knit 0.3.0")
     registerKnitServices()
     let shell = Shell()
     bindService(shell, version, ready, pollEvents, getState, setRoot, setSelected,
@@ -376,7 +376,7 @@ when isMainModule:
           window.eval(js))
 
     app.name = "knit"
-    app.version = "0.1.0"
+    app.version = "0.3.0"
 
     app.whenReady(proc() =
       try:
