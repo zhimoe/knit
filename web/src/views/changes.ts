@@ -86,14 +86,17 @@ function renderTreeRows(
     const key = changeKey(file);
     const checked = file.group === 'staged';
     const active = key === selectedKey;
+    const isNestedDir = file.path.endsWith('/');
     const st = statusClass(file);
     const statClass = file.conflict ? 'conflict' : st;
     html += `
       <div class="tree-file ${active ? 'active' : ''} ${checked ? '' : 'off'} ${file.untracked ? 'untracked' : ''}"
         data-cfile="${esc(key)}" role="button" tabindex="0"
-        style="padding-left:${depth * 13 + 6}px" title="${esc(file.path)}${file.untracked ? ' · 未跟踪' : ''}${
+        style="padding-left:${depth * 13 + 6}px" title="${esc(file.path)}${
+          isNestedDir ? ' · 嵌套 Git 仓库 / 未跟踪目录' : file.untracked ? ' · 未跟踪' : ''
+        }${
           file.group === 'staged' ? ' · 已暂存' : ' · 未暂存'
-        } · 双击全页查看 diff">
+        }${isNestedDir ? '' : ' · 双击全页查看 diff'}">
         <label class="check-wrap">
           <input type="checkbox" data-check="${esc(key)}" ${checked ? 'checked' : ''}>
           <span class="check-box">${icon('check')}</span>
@@ -103,10 +106,12 @@ function renderTreeRows(
         ${
           file.conflict
             ? `<button class="conflict-btn" type="button" data-merge="${esc(file.path)}" title="打开三栏冲突编辑器">解决冲突</button>`
-            : `<span class="tree-file-stats">
-                <span class="plus">+${Math.max(0, file.additions)}</span>
-                ${file.deletions > 0 ? `<span class="minus">−${file.deletions}</span>` : ''}
-              </span>`
+            : isNestedDir
+              ? `<span class="nested-repo-tag" title="该目录包含独立的 .git 仓库，外层仓库不展开其内部文件">嵌套仓库</span>`
+              : `<span class="tree-file-stats">
+                  <span class="plus">+${Math.max(0, file.additions)}</span>
+                  ${file.deletions > 0 ? `<span class="minus">−${file.deletions}</span>` : ''}
+                </span>`
         }
         ${
           file.untracked

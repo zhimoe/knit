@@ -60,13 +60,17 @@ export function avatarChip(name: string, cls = 'mini-avatar'): string {
 }
 
 export function dirnameOf(path: string): string {
-  const parts = path.split('/');
+  const clean = path.replace(/\/+$/, '');
+  const parts = clean.split('/');
   parts.pop();
   return parts.length ? `${parts.join('/')}/` : '';
 }
 
 export function basenameOf(path: string): string {
-  return path.split('/').pop() || path;
+  const isDir = path.endsWith('/');
+  const clean = isDir ? path.replace(/\/+$/, '') : path;
+  const base = clean.split('/').pop() || clean || path;
+  return isDir ? `${base}/` : base;
 }
 
 export function shortPath(path: string): string {

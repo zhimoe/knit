@@ -22,12 +22,15 @@ export function countTreeFiles<T extends { path: string }>(node: PathTreeNode<T>
 export function buildPathTree<T extends { path: string }>(entries: T[]): PathTreeNode<T> {
   const root: PathTreeNode<T> = { name: '', path: '', children: new Map(), files: [] };
   for (const entry of entries) {
-    const parts = entry.path.split('/');
+    const isDirEntry = entry.path.endsWith('/');
+    const cleanPath = isDirEntry ? entry.path.replace(/\/+$/, '') : entry.path;
+    const parts = cleanPath.split('/').filter(Boolean);
+    if (!parts.length) continue;
     let node = root;
     let prefix = '';
     parts.forEach((part, index) => {
       if (index === parts.length - 1) {
-        node.files.push({ ...entry, name: part });
+        node.files.push({ ...entry, name: isDirEntry ? `${part}/` : part });
         return;
       }
       prefix = prefix ? `${prefix}/${part}` : part;

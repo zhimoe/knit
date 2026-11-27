@@ -171,6 +171,16 @@ export function renderDiffBodyOnly(options: DiffBlockOptions): string {
       </div>`;
   }
   if (!diff.hunks.length) {
+    if (options.file.path.endsWith('/')) {
+      return `
+        <div class="diff-scroll">
+          <div class="diff-empty">
+            ${icon('folder')}
+            <strong>${esc(options.file.path)} 是嵌套 Git 仓库</strong>
+            <span>该目录包含独立的 <code>.git</code>，外层仓库不会展开其内部文件差异。如需忽略可写入 <code>.gitignore</code>，或将其作为独立仓库管理。</span>
+          </div>
+        </div>`;
+    }
     return `
       <div class="diff-scroll">
         <div class="diff-empty">${icon('file')}<span>两侧内容一致，没有差异。</span></div>
@@ -216,7 +226,7 @@ export function renderDiffBlock(options: DiffBlockOptions): string {
       ${
         path
           ? `<span class="diff-file" title="${esc(path)}">
-              ${icon('file')}
+              ${icon(path.endsWith('/') ? 'folder' : 'file')}
               <span class="dfdir">${esc(dirnameOf(path))}</span>
               <span class="dfname">${esc(basenameOf(path))}</span>
             </span>`
