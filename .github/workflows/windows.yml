@@ -73,6 +73,7 @@ jobs:
             --passL:-Wl,--subsystem,windows --passL:-s `
             --hints:off --path:../nimi/src `
             -o:dist/knit-win64-portable/knit.exe src/main.nim
+          if ($LASTEXITCODE -ne 0) { throw "MinGW build failed ($LASTEXITCODE)" }
           Copy-Item -Force ..\nimi\src\nimi\platform\windows\webview2\sdk\x64\WebView2Loader.dll dist\knit-win64-portable\WebView2Loader.dll
           New-Item -ItemType File -Force -Path dist/knit-win64-portable/knit.portable | Out-Null
           Compress-Archive -Force -Path dist/knit-win64-portable -DestinationPath dist/knit-win64-portable.zip
@@ -134,6 +135,7 @@ jobs:
             --clang.exe:"$zigRun\zig-cc.cmd" --clang.linkerexe:"$zigRun\zig-cc.cmd" `
             --nimcache:"$zigRun\cache" --hints:off --path:../nimi/src `
             -o:"$zigRun\knit.exe" src/main.nim
+          if ($LASTEXITCODE -ne 0) { throw "Zig build failed ($LASTEXITCODE)" }
           New-Item -ItemType File -Force -Path "$zigRun\knit.portable" | Out-Null
           $dataDir = Join-Path $zigRun "data"
           New-Item -ItemType Directory -Force -Path $dataDir | Out-Null

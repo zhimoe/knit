@@ -19,6 +19,18 @@ when defined(windows):
   proc winMessageBoxW(hwnd: pointer, text, caption: WideCString, flags: uint32): int32
     {.stdcall, dynlib: "user32.dll", importc: "MessageBoxW".}
 
+type
+  Shell = ref object
+
+var
+  window: Window
+  quitWhenReady = false
+  pageReady = false
+  lastReload = 0.0
+  repoWatcher: FileWatcher
+  watchedRoot = ""
+  editorProcs: seq[Process]
+
 proc safeEcho(msg: string) =
   when defined(windows) and defined(guiapp):
     if getEnv("KNIT_DEV") != "1":
@@ -65,18 +77,6 @@ proc showFatalError(stage, detail: string) =
                  (if logFile.len > 0: "\n\n日志已写入：\n" & logFile else: "")
       discard winMessageBoxW(nil, newWideCString(text),
                              newWideCString("Knit 启动失败"), 0x00000010'u32)
-
-type
-  Shell = ref object
-
-var
-  window: Window
-  quitWhenReady = false
-  pageReady = false
-  lastReload = 0.0
-  repoWatcher: FileWatcher
-  watchedRoot = ""
-  editorProcs: seq[Process]
 
 proc version(self: Shell): string =
   "knit 0.1.0"
