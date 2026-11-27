@@ -211,7 +211,7 @@ window.nimi = {
     if (method === 'Shell.setRoot') return JSON.stringify({ ok: true, root: parseArg(arg).root || '/Users/zhimoe/code' });
     if (method === 'Shell.setExclusions') return JSON.stringify({ ok: true });
     if (method === 'Shell.pickRoot' || method === 'Shell.pickPatch') return '';
-    if (method === 'Shell.openFile' || method === 'Shell.jsError') return { ok: true };
+    if (method === 'Shell.openFile' || method === 'Shell.jsError' || method === 'Shell.setTheme') return { ok: true };
     if (method === 'Shell.pollEvents') return '[]';
     if (method === 'Agent.config') return env(agentConfig);
     if (method === 'Repo.cached') return env(repos);

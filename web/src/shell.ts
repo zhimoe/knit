@@ -41,11 +41,12 @@ export const shellHtml = `
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.8a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1V7M7 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h5a1.5 1.5 0 0 0 1.5-1.5L17 7"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M15.5 4.5 19.5 8.5 8.5 19.5H4.5v-4L15.5 4.5Z"/></symbol>
     <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 3.5 3.5 8 12 12.5 20.5 8 12 3.5Z"/><path d="M3.5 12.5 12 17l8.5-4.5"/><path d="M3.5 16.5 12 21l8.5-4.5"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a6.8 6.8 0 0 0 11 11Z"/></symbol>
   </svg>
 
   <div class="app" id="app">
     <header class="titlebar">
-      <div class="traffic" aria-hidden="true"><span class="tl tl-red"></span><span class="tl tl-yellow"></span><span class="tl tl-green"></span></div>
       <div class="brand" aria-label="Knit">
         <span class="logo" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -56,10 +57,10 @@ export const shellHtml = `
         <span class="brand-name">Knit</span>
         <span class="brand-sub">Git 工作台</span>
       </div>
-      <button class="cmdbar" id="cmdSearch" type="button" data-action="focus-repo-search" title="搜索仓库（⌘P / ⌘K）">
-        <svg class="ic"><use href="#i-search"></use></svg>
-        <span class="cmdbar-text">搜索仓库、分支…</span>
-        <kbd>⌘P</kbd>
+      <button class="cmdbar" id="cmdSearch" type="button" data-action="open-commands" data-popover-trigger title="命令面板（⌘K）：Rebase / Reset / Force Push / Worktree">
+        <svg class="ic"><use href="#i-command"></use></svg>
+        <span class="cmdbar-text">命令面板：Rebase / Reset / Force Push / Worktree…</span>
+        <kbd>⌘K</kbd>
       </button>
       <div class="top-right">
         <button class="top-chip" id="fetchBtn" type="button" data-action="branch-fetch" title="Fetch 全部远端（git fetch --all --prune）">
@@ -71,11 +72,11 @@ export const shellHtml = `
         <button class="top-chip" id="branchMgrBtn" type="button" data-action="open-branches" title="分支管理：切换 / 新建 / 合并 / 删除">
           <svg class="ic"><use href="#i-branch"></use></svg><span>分支</span>
         </button>
-        <button class="top-chip" id="cmdPaletteBtn" type="button" data-action="open-commands" data-popover-trigger title="命令面板（⌘K）：Rebase / Reset / Force Push / Worktree">
-          <svg class="ic"><use href="#i-command"></use></svg><kbd>⌘K</kbd>
-        </button>
         <button class="top-icon" id="rescanBtn" type="button" data-action="rescan" title="重新扫描根目录">
           <svg class="ic"><use href="#i-folder"></use></svg>
+        </button>
+        <button class="top-icon" id="themeToggleBtn" type="button" data-action="toggle-theme" title="切换浅色 / 深色主题" aria-label="切换浅色 / 深色主题">
+          <svg class="ic"><use href="#i-moon"></use></svg>
         </button>
       </div>
     </header>
@@ -120,9 +121,9 @@ export const shellHtml = `
           </button>
           <span class="tabbar-divider"></span>
           <div class="view-tabs" role="tablist" aria-label="主视图">
-            <button class="view-tab active" id="viewTabLog" type="button" data-view="log" role="tab" aria-selected="true" title="Log（⌘1）">
+            <button class="view-tab active" id="viewTabLog" type="button" data-view="log" role="tab" aria-selected="true" title="Log · 提交历史（⌘1）">
               <svg class="ic"><use href="#i-history"></use></svg>
-              <span>Log: <b id="viewBranchName">main</b></span>
+              <span>Log</span>
             </button>
             <button class="view-tab" id="viewTabChanges" type="button" data-view="changes" role="tab" aria-selected="false" title="Changes · 工作区更改（⌘2）">
               <svg class="ic"><use href="#i-file"></use></svg>

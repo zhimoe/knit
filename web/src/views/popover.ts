@@ -300,7 +300,7 @@ export const renderCommandPalette = (
           </button>
           <button class="filter-option" type="button" data-cmd="reset-hard">
             <span class="branch-ico" style="color:var(--red)">${icon('undo')}</span>
-            <span class="filter-option-main"><span style="color:#f09aa0">Reset --hard 到 ${esc(commit.shortHash)}（自动快照）…</span><span class="filter-option-sub">丢弃工作区改动</span></span>
+            <span class="filter-option-main"><span style="color:var(--red)">Reset --hard 到 ${esc(commit.shortHash)}（自动快照）…</span><span class="filter-option-sub">丢弃工作区改动</span></span>
           </button>`
         : ''
     }
@@ -309,7 +309,7 @@ export const renderCommandPalette = (
     }>
       <span class="branch-ico" style="color:var(--orange)">${icon('arrow-up')}</span>
       <span class="filter-option-main">
-        <span style="color:${isProtected ? 'var(--muted)' : '#e6ba7a'}">Push --force-with-lease${
+        <span style="color:${isProtected ? 'var(--muted)' : 'var(--orange)'}">Push --force-with-lease${
           isProtected ? `（${esc(repo?.branch ?? '')} 受保护已禁用）` : '…'
         }</span>
         <span class="filter-option-sub">安全强推</span>

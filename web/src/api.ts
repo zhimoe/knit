@@ -119,6 +119,11 @@ export const api = {
 
   pickPatch: () => guard('Shell.pickPatch', () => bridge().call('Shell.pickPatch') as Promise<string>),
 
+  setTheme: (dark: boolean) =>
+    bridge()
+      .call('Shell.setTheme', dark)
+      .catch(() => ({ ok: false })),
+
   openFile: (path: string, line = 0) => guard('Shell.openFile', () => bridge().call('Shell.openFile', path, line)),
 
   jsError: (message: string) => {

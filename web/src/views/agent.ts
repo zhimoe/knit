@@ -55,7 +55,7 @@ function renderMessage(line: AgentLine): string {
     cls = 't-system';
     prefix = '✕';
   }
-  const style = line.cls === 'err' ? ' style="color:#f09aa0"' : line.cls === 'warn' ? ' style="color:#e6ba7a"' : '';
+  const style = line.cls === 'err' ? ' style="color:var(--red)"' : line.cls === 'warn' ? ' style="color:var(--orange)"' : '';
   const actions = line.applyCommit
     ? `<div class="term-actions-row">
         <button class="term-action" type="button" data-apply-commit="${esc(encodeURIComponent(line.applyCommit))}">
@@ -113,9 +113,9 @@ export function renderTerminalPanel(state: TerminalDrawerState): { className: st
       </span>`;
 
   const statusChips =
-    (queuedPos ? `<span class="skill-chip" style="color:#e6ba7a">排队中 #${queuedPos}</span>` : '') +
+    (queuedPos ? `<span class="skill-chip" style="color:var(--orange)">排队中 #${queuedPos}</span>` : '') +
     (dirtyWarning
-      ? `<span class="skill-chip" style="color:#f09aa0">⚠ 工作区已变脏</span>
+      ? `<span class="skill-chip" style="color:var(--red)">⚠ 工作区已变脏</span>
          <button class="diff-tool-btn" type="button" data-act="agent-restore">恢复到打开前</button>`
       : '');
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
   <title>Knit — Git 工作台原型</title>
   <link rel="stylesheet" href="styles.css">
 </head>
@@ -43,11 +43,12 @@
     <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M9.5 4.5v15"/></symbol>
     <symbol id="i-expand" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5"/><path d="M4 9l5-5M20 9l-5-5M4 15l5 5M20 15l-5 5"/></symbol>
     <symbol id="i-command" viewBox="0 0 24 24"><path d="M9 6.5A2.5 2.5 0 1 0 6.5 9H9m0-2.5V9m0 0h6m-6 0v6m6-6V6.5A2.5 2.5 0 1 1 17.5 9H15m0 0v6m0-6H9m6 6h2.5A2.5 2.5 0 1 1 15 17.5V15m0 0H9m0 0v2.5A2.5 2.5 0 1 1 6.5 15H9"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2.2M12 19.3v2.2M4.9 4.9l1.6 1.6M17.5 17.5l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.9 19.1l1.6-1.6M17.5 6.5l1.6-1.6"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 14.5A8.5 8.5 0 1 1 9.5 3.5a6.8 6.8 0 0 0 11 11Z"/></symbol>
   </svg>
 
   <div class="app" id="app">
     <header class="titlebar">
-      <div class="traffic" aria-hidden="true"><span class="tl tl-red"></span><span class="tl tl-yellow"></span><span class="tl tl-green"></span></div>
       <div class="brand" aria-label="Knit">
         <span class="logo" aria-hidden="true">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -58,9 +59,9 @@
         <span class="brand-name">Knit</span>
         <span class="brand-sub">Git 工作台</span>
       </div>
-      <button class="cmdbar" id="cmdSearch" type="button" title="搜索仓库（⌘K）">
+      <button class="cmdbar" id="cmdSearch" type="button" title="快速跳转与命令（⌘K）">
         <svg class="ic"><use href="#i-search"></use></svg>
-        <span class="cmdbar-text">搜索仓库、分支…</span>
+        <span class="cmdbar-text">快速切换仓库、分支或执行命令…</span>
         <kbd>⌘K</kbd>
       </button>
       <div class="top-right">
@@ -113,7 +114,7 @@
           <div class="view-tabs" role="tablist" aria-label="主视图">
             <button class="view-tab active" id="viewTabLog" type="button" data-view="log" role="tab" aria-selected="true" title="Log（⌘1）">
               <svg class="ic"><use href="#i-history"></use></svg>
-              <span>Log: <b id="viewBranchName">main</b></span>
+              <span>Log</span>
             </button>
             <button class="view-tab" id="viewTabChanges" type="button" data-view="changes" role="tab" aria-selected="false" title="Changes · 工作区更改（⌘2）">
               <svg class="ic"><use href="#i-file"></use></svg>

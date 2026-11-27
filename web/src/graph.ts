@@ -3,7 +3,7 @@
 
 import type { Commit } from './types';
 
-const PALETTE = ['#6ea8ff', '#68c98d', '#c18df2', '#e0a35c', '#e57984', '#5fa8c9'];
+const PALETTE = ['#2563eb', '#16a34a', '#7c3aed', '#d97706', '#e11d48', '#0891b2'];
 const LANE_W = 18;
 const GRAPH_X0 = 14;
 export const GRAPH_ROW_H = 36;
@@ -116,12 +116,12 @@ export function graphSvg(row: GraphRow, width: number, selected: boolean, primar
   }
   if (row.isHead) {
     parts.push(`<circle cx="${cx}" cy="${cy}" r="5" fill="${col}"/>`);
-    parts.push(`<circle cx="${cx}" cy="${cy}" r="1.7" fill="#17181c" opacity=".9"/>`);
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="1.8" fill="var(--surface-graph, #ffffff)"/>`);
   } else if (row.isMerge) {
-    parts.push(`<circle cx="${cx}" cy="${cy}" r="4.7" fill="#17181c" stroke="${col}" stroke-width="2"/>`);
-    parts.push(`<circle cx="${cx}" cy="${cy}" r="1.35" fill="${col}"/>`);
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="4.7" fill="var(--surface-graph, #ffffff)" stroke="${col}" stroke-width="2"/>`);
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="1.4" fill="${col}"/>`);
   } else {
-    parts.push(`<circle cx="${cx}" cy="${cy}" r="4" fill="#17181c" stroke="${col}" stroke-width="2"/>`);
+    parts.push(`<circle cx="${cx}" cy="${cy}" r="4" fill="var(--surface-graph, #ffffff)" stroke="${col}" stroke-width="2"/>`);
   }
 
   return `<svg width="${width}" height="${GRAPH_ROW_H}" viewBox="0 0 ${width} ${GRAPH_ROW_H}" aria-hidden="true">${parts.join('')}</svg>`;

@@ -7,37 +7,37 @@ export const icon = (name: string, cls = 'ic'): string =>
   `<svg class="${cls}" aria-hidden="true"><use href="#i-${name}"></use></svg>`;
 
 export const LANG_META: Record<string, { short: string; color: string }> = {
-  TS: { short: 'TS', color: '#4f8cf7' },
-  TypeScript: { short: 'TS', color: '#4f8cf7' },
-  Nim: { short: 'NIM', color: '#e0a35c' },
-  Go: { short: 'GO', color: '#38b8c9' },
-  Rust: { short: 'RS', color: '#df8a5f' },
-  Py: { short: 'PY', color: '#e5c15c' },
-  Python: { short: 'PY', color: '#e5c15c' },
-  Kotlin: { short: 'KT', color: '#b088ff' },
-  MDX: { short: 'MDX', color: '#e6b25e' },
-  md: { short: 'MD', color: '#9aa6b5' },
-  CSS: { short: 'CSS', color: '#58a6e0' },
-  Shell: { short: 'SH', color: '#79c98d' },
-  Astro: { short: 'AS', color: '#b98ff0' },
-  '—': { short: 'GIT', color: '#6ea8ff' },
+  TS: { short: 'TS', color: '#2563eb' },
+  TypeScript: { short: 'TS', color: '#2563eb' },
+  Nim: { short: 'NIM', color: '#c26d10' },
+  Go: { short: 'GO', color: '#0891b2' },
+  Rust: { short: 'RS', color: '#c2410c' },
+  Py: { short: 'PY', color: '#b45309' },
+  Python: { short: 'PY', color: '#b45309' },
+  Kotlin: { short: 'KT', color: '#7c3aed' },
+  MDX: { short: 'MDX', color: '#b45309' },
+  md: { short: 'MD', color: '#64748b' },
+  CSS: { short: 'CSS', color: '#0284c7' },
+  Shell: { short: 'SH', color: '#15803d' },
+  Astro: { short: 'AS', color: '#7c3aed' },
+  '—': { short: 'GIT', color: '#2563eb' },
 };
 
 export function langMeta(lang: string): { short: string; color: string } {
-  return LANG_META[lang] ?? { short: lang.slice(0, 3).toUpperCase() || 'GIT', color: '#6ea8ff' };
+  return LANG_META[lang] ?? { short: lang.slice(0, 3).toUpperCase() || 'GIT', color: '#2563eb' };
 }
 
 export function tint(hex: string, alpha: number): string {
   const clean = hex.replace('#', '');
   const num = Number.parseInt(clean, 16);
-  if (!Number.isFinite(num)) return `rgba(110, 168, 255, ${alpha})`;
+  if (!Number.isFinite(num)) return `rgba(37, 99, 235, ${alpha})`;
   const r = (num >> 16) & 255;
   const g = (num >> 8) & 255;
   const b = num & 255;
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-const AVATAR_PALETTE = ['#6ea8ff', '#63c6a5', '#e0a25d', '#bb8ff2', '#e57984', '#6fb3e8', '#d5a35c'];
+const AVATAR_PALETTE = ['#2563eb', '#0d9488', '#c26d10', '#7c3aed', '#e11d48', '#0284c7', '#15803d'];
 
 export function authorColor(name: string): string {
   let h = 2166136261;

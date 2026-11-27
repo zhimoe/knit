@@ -3,15 +3,15 @@ import { basenameOf, dirnameOf, icon } from './icons';
 import { esc, relTime } from './util';
 
 const BLAME_TINTS = [
-  'rgba(91,140,255,.16)',
-  'rgba(193,141,242,.15)',
-  'rgba(224,163,92,.15)',
-  'rgba(92,195,143,.15)',
-  'rgba(224,108,114,.15)',
-  'rgba(95,168,201,.16)',
+  'rgba(37,99,235,.09)',
+  'rgba(124,58,237,.09)',
+  'rgba(217,119,6,.09)',
+  'rgba(22,163,74,.09)',
+  'rgba(225,29,72,.09)',
+  'rgba(8,145,178,.09)',
 ];
 
-const BLAME_BORDERS = ['#5b8cff', '#c18df2', '#e0a35c', '#5cc38f', '#e06c72', '#5fa8c9'];
+const BLAME_BORDERS = ['#2563eb', '#7c3aed', '#d97706', '#16a34a', '#e11d48', '#0891b2'];
 
 const colorIndex = (hash: string): number => {
   let acc = 0;

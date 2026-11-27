@@ -649,7 +649,7 @@ function renderViewBar(): void {
     } else if (count > 0) {
       const conf = state.changes.filter((f) => f.conflict).length || repo.dirty.conflicted;
       right.innerHTML = conf
-        ? `<span style="color:#f09aa0">${conf} 个冲突 · ${count} 个未提交更改</span>`
+        ? `<span style="color:var(--red);font-weight:550">${conf} 个冲突 · ${count} 个未提交更改</span>`
         : `<span>${count} 个未提交更改</span>`;
     } else {
       right.innerHTML = `<span class="vb-clean">工作区干净</span>`;
@@ -3459,7 +3459,13 @@ async function handleNamedAction(action: string, el: HTMLElement): Promise<void>
     }
     case 'open-commands': {
       const isProtected = Boolean(repo?.branch && (state.host?.protectedBranches ?? ['main', 'master']).includes(repo.branch));
-      showPopover(el, 'pop-cmd', renderCommandPalette(repo, isProtected, currentCommit()), 340, 'right');
+      const align = el.id === 'cmdSearch' ? 'left' : 'right';
+      showPopover(el, 'pop-cmd', renderCommandPalette(repo, isProtected, currentCommit()), 360, align);
+      return;
+    }
+    case 'toggle-theme': {
+      const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
       return;
     }
     case 'open-changes': {
@@ -3818,7 +3824,26 @@ window.addEventListener('unhandledrejection', (event) => {
   api.jsError(`unhandledrejection: ${String(event.reason)}`);
 });
 
+function applyTheme(theme: 'light' | 'dark'): void {
+  document.documentElement.dataset.theme = theme;
+  lsSet('knit.theme', theme);
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) {
+    const isDark = theme === 'dark';
+    btn.innerHTML = icon(isDark ? 'sun' : 'moon');
+    btn.title = isDark ? '切换到浅色主题（Porcelain）' : '切换到深色主题（Slate）';
+    btn.setAttribute('aria-label', btn.title);
+  }
+  void api.setTheme(theme === 'dark');
+}
+
+function initTheme(): void {
+  const saved = lsGet('knit.theme') ?? 'light';
+  applyTheme(saved === 'dark' ? 'dark' : 'light');
+}
+
 mountShell();
+initTheme();
 restoreSplitterSizes();
 installHostEvents();
 bindSplitters();

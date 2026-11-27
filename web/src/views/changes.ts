@@ -34,7 +34,7 @@ export function renderChangesHead({ repo, files }: ChangesHeadOptions): string {
             ? `
           <span>${files.length} 个变更项</span>
           ${untrackedCount ? `<span class="sep">·</span><span class="untracked-meta">${untrackedCount} 未跟踪</span>` : ''}
-          ${conflictCount ? `<span class="sep">·</span><span style="color:#f09aa0">${conflictCount} 冲突</span>` : ''}
+          ${conflictCount ? `<span class="sep">·</span><span style="color:var(--red);font-weight:550">${conflictCount} 冲突</span>` : ''}
           <span class="sep">·</span>
           <span class="plus">+${totalAdd}</span><span class="minus">−${totalDel}</span><span class="sep">·</span>
           <span><span id="changesCheckedCount">${stagedCount}</span> / ${files.length} 已暂存</span><span class="sep">·</span>

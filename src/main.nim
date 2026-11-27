@@ -243,6 +243,11 @@ proc jsError(self: Shell, message: string): string =
       safeEcho("knit: js error: " & redact(message, [loadSettings().root]))
   result = $ %*{"ok": true}
 
+proc setTheme(self: Shell, dark: bool): string =
+  if window != nil:
+    window.setDarkAppearance(dark)
+  result = $ %*{"ok": true, "dark": dark}
+
 proc openFile(self: Shell, path: string, line: int): string =
   reapEditors()
   openPath(path, line)
@@ -334,6 +339,21 @@ proc devReload() =
 
 when isMainModule:
   try:
+    when defined(macosx):
+      # Finder-launched .app bundles get a minimal PATH (/usr/bin:/bin:...);
+      # prepend common user/Homebrew tool directories so git, hooks and agents work.
+      block:
+        let current = getEnv("PATH")
+        var parts = if current.len > 0: current.split(':') else: @[]
+        var extra: seq[string]
+        let home = getHomeDir()
+        for dir in ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin",
+                    home / ".local" / "bin", home / ".bun" / "bin", home / ".cargo" / "bin"]:
+          if dirExists(dir) and dir notin parts and dir notin extra:
+            extra.add dir
+        if extra.len > 0:
+          putEnv("PATH", (extra & parts).join(":"))
+
     for arg in commandLineParams():
       if arg == "--smoke":
         quitWhenReady = true
@@ -342,7 +362,7 @@ when isMainModule:
     registerKnitServices()
     let shell = Shell()
     bindService(shell, version, ready, pollEvents, getState, setRoot, setSelected,
-                setExclusions, pickRoot, openFile, pickPatch, jsError)
+                setExclusions, pickRoot, openFile, pickPatch, jsError, setTheme)
     try:
       discard agent.ensureDefaultConfig()
     except CatchableError as e:
@@ -375,6 +395,7 @@ when isMainModule:
           height: state.windowHeight,
           url: "nimi://app/index.html",
           files: newFileServer(webRoot, "nimi")))
+        window.setDarkAppearance(false)
         window.onClose(proc(e: var CloseEvent) =
           pageReady = false
           discard agent.stopAll()
