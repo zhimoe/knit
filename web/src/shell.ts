@@ -59,7 +59,7 @@ export const shellHtml = `
       </div>
       <button class="cmdbar" id="cmdSearch" type="button" data-action="open-commands" data-popover-trigger title="命令面板（⌘K）：Rebase / Reset / Force Push / Worktree">
         <svg class="ic"><use href="#i-command"></use></svg>
-        <span class="cmdbar-text">命令面板：Rebase / Reset / Force Push / Worktree…</span>
+        <span class="cmdbar-text">命令面板…</span>
         <kbd>⌘K</kbd>
       </button>
       <div class="top-right">
