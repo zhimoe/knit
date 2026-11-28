@@ -33,28 +33,39 @@
 - **可折叠侧栏与全套可拖拽面板**：侧栏、Log/详情、文件树/Diff、Changes 文件树、底部终端全部支持拖拽调宽/调高（双击重置，状态自动记忆）。
 
 ### 2. JetBrains 风格 Git Log、Diff 与 Changes
-- **可视化分支图**：平滑贝塞尔泳道曲线、HEAD/Merge 节点区分、分支/远端/标签胶囊，支持按分支、作者、时间、文件路径与关键词实时筛选，支持游标分页与虚拟滚动。
-- **高质量并排 / 统一 Diff**：支持语法高亮与宿主计算的词级差异高亮（UTF-16 CJK 精确对齐）、未变更上下文折叠展开、大文件分块传输（单次 IPC ≤ 256 KB）、忽略空白、逐块暂存（Hunk Staging）与全页面 Diff（`⤢` / 双击文件）。
-- **独立 Changes 工作区**：目录树展示已跟踪改动，独立分区展示「未跟踪文件 · 未忽略」，勾选即暂存，支持安全「放弃更改」（自动创建 stash 快照）、按仓库记忆提交草稿、历史提交信息、Amend 与「提交并推送」。
+- **明暗双主题（Porcelain Light / Slate Dark）**：默认高质感 Porcelain 浅色主题，顶栏一键切换 Slate 深色并同步原生窗口外观。
+- **可视化分支图与多选提交**：平滑贝塞尔泳道曲线（自动回收僵尸轨道、自适应列宽不重叠）、HEAD/Merge 节点区分、分支/远端/标签胶囊；支持按分支、作者、时间、文件路径、关键词与 **代码内容搜索（Pickaxe `-S`/`-G`）** 实时筛选；支持 `⌘/Ctrl`、`Shift` 多选提交，一键 **范围对比 Diff (`base..head`)** 与 **批量 Cherry-pick**。
+- **高质量并排 / 统一 / 图片 Diff**：支持语法高亮与宿主计算的词级差异高亮（UTF-16 CJK 精确对齐）、未变更上下文折叠展开、大文件分块传输（单次 IPC ≤ 256 KB）、忽略空白、**行级与块级暂存/撤销/丢弃**、全页面 Diff（`⤢` / 双击文件），以及 **图片 Diff 预览**（并排与滑块叠层对比）。
+- **独立 Changes 工作区与统一右键菜单**：目录树展示已跟踪改动，独立分区展示「未跟踪文件 · 未忽略」（正确识别嵌套 Git 仓库）；勾选即暂存，支持安全「放弃更改」（自动创建 stash 快照）、按仓库记忆提交草稿、历史提交信息、Amend 与「提交并推送」；提交行、文件行、侧栏仓库均配备完整右键上下文菜单（含一键写入 `.gitignore` 与访达/资源管理器定位）。
 
 <table>
   <tr>
     <td width="50%">
-      <img src="docs/assets/changes.png" alt="Changes 工作区与提交编辑器" />
-      <p align="center"><sub>独立 Changes 工作区：目录树、未跟踪分区、逐块暂存与草稿记忆</sub></p>
+      <img src="docs/assets/changes.png" alt="Changes 工作区与行级/块级暂存" />
+      <p align="center"><sub>独立 Changes 工作区：目录树、未跟踪分区、行级/块级暂存丢弃与草稿记忆</sub></p>
     </td>
     <td width="50%">
       <img src="docs/assets/merge.png" alt="三栏冲突合并与可编辑结果" />
-      <p align="center"><sub>三栏冲突合并：逐块接受左/右/两边，并支持切换自由编辑 Result</sub></p>
+      <p align="center"><sub>三栏冲突合并：同步滚动、全部左/右、二进制冲突保留与自由编辑 Result</sub></p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <img src="docs/assets/branches.png" alt="分支、Tags 与 Remotes 统一管理" />
+      <p align="center"><sub>仓库管理弹窗：分支切换合并、Tag 创建推送与 Remote 地址管理</sub></p>
+    </td>
+    <td width="50%">
+      <img src="docs/assets/preview.png" alt="多仓库总览与 Porcelain 浅色主界面" />
+      <p align="center"><sub>Porcelain 浅色工作台：Push/Pull 实时角标、Pickaxe 搜索与 Reflog 入口</sub></p>
     </td>
   </tr>
 </table>
 
 ### 3. 完整日常 Git 与高级操作
-- **分支与远端操作**：`Fetch --all --prune`、`Pull`、`Pull --rebase`、`Checkout`（含远端跟踪检出）、新建分支（可选起点与自动切换）、合并到当前分支、冲突中止（`git merge --abort`）、删除分支（受保护分支拦截 + 未合并二次确认）。
-- **可编辑三栏合并器**：`Yours / Result / Theirs` 三栏对照，支持「自动解决简单冲突」、逐块点选，也可一键切换到「编辑结果」直接修改最终内容并实时检测残留冲突标记，应用后自动 `git add`。
-- **交互式变基（Rebase -i）**：支持拖拽重排提交与 `pick / reword / squash / fixup / edit / drop`，变基前自动写入 reflog 书签，遇冲突展示「继续 / 跳过 / 中止」横幅。
-- **Blame、Worktree / Hand、Shelf、Console 与安全护栏**：逐行按提交着色的 `Blame`（`-M -C`）、独立目录管理的 Worktree（`.knit/hands/`）、不污染 reflog 的 Shelf 补丁箱、500 条环形 Git 命令耗时控制台、以及 `reset --hard` 自动快照与受保护分支禁止 `--force-with-lease`。
+- **远端同步、Clone/Init 与仓库管理**：顶栏 `Fetch --all --prune`、`Pull`（含 `↓N` 落后角标）、`Push`（含 `↑N` 领先角标）、`Pull --rebase`；侧栏一键 **Clone 远端仓库 / `git init` 新建仓库**；统一三标签弹窗管理 **分支 / Tags / Remotes**。
+- **可编辑三栏合并器**：`Yours / Result / Theirs` 三栏比例同步滚动，支持「自动解决 / 全部左边 / 全部右边」、逐块点选与自由编辑 Result（实时检测残留冲突标记）；二进制冲突提供一键保留 `Yours / Theirs`。
+- **Reflog 浏览器与交互式变基（Rebase -i）**：内置 `git reflog` 浏览器，误操作后可一键 `Soft / Mixed / Hard` 安全回退；`Rebase -i` 支持拖拽重排与 `pick / reword / squash / fixup / edit / drop`，遇冲突展示「继续 / 跳过 / 中止」横幅。
+- **可视化设置、Blame、Worktree / Hand、Shelf、Console 与安全护栏**：内置图形化设置弹窗（根目录、扫描深度、排除规则、编辑器、终端、受保护分支与危险操作确认）；逐行着色 `Blame`（`-M -C`）、独立目录 `Worktree`、Shelf 补丁箱、500 条环形 Git 耗时控制台，以及 `reset --hard` / 丢弃前自动快照保护。
 
 ### 4. 内置终端与 Agent 协作抽屉
 - 底部默认折叠为 38 px 精致页签条（`⌃J` / `Ctrl+J` 切换），内置 **终端 / Codex / Pi** 会话。
