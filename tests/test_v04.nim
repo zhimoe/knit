@@ -16,7 +16,7 @@ suite "v0.4.0 git operations":
     let bare = getTempDir() / "knit-test" / "v04-bare.git"
     removeDir(bare)
     createDir(bare)
-    check runGit(bare, ["init", "--bare", "-q"]).code == 0
+    check runGit(bare, ["init", "--bare", "-q", "-b", "main"]).code == 0
 
     # initRepo creates a new repo with branch main
     let initDir = getTempDir() / "knit-test" / "v04-init"

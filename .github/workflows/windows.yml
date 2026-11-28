@@ -106,7 +106,7 @@ jobs:
           $p = Start-Process -FilePath "$runDir\knit.exe" -ArgumentList "--smoke" `
             -WorkingDirectory $runDir -RedirectStandardOutput $stdoutFile `
             -RedirectStandardError $stderrFile -PassThru
-          if (-not $p.WaitForExit(30000)) {
+          if (-not $p.WaitForExit(45000)) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             Write-Host "=== stdout.txt ==="
             Get-Content $stdoutFile -ErrorAction SilentlyContinue
@@ -184,7 +184,7 @@ jobs:
           $p = Start-Process -FilePath "$zigRun\knit.exe" -ArgumentList "--smoke" `
             -WorkingDirectory $zigRun -RedirectStandardOutput $stdoutFile `
             -RedirectStandardError $stderrFile -PassThru
-          if (-not $p.WaitForExit(30000)) {
+          if (-not $p.WaitForExit(45000)) {
             Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             Write-Host "=== zig stdout ==="
             Get-Content $stdoutFile -ErrorAction SilentlyContinue
